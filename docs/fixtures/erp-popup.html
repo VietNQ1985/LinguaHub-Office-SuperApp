@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><title>Kiểm tra tab ERP</title>
+<h1>Kiểm tra mở nhiều tab</h1>
+<button id="url">Mở URL trực tiếp</button>
+<button id="blank">Mở trang trắng rồi ghi nội dung</button>
+<button id="two">Mở hai trang</button>
+<p id="result">Chưa nhận phản hồi</p>
+<script>
+document.querySelector('#url').onclick=()=>window.open('https://example.com/','_blank');
+document.querySelector('#blank').onclick=()=>{
+ const child=window.open('about:blank','_blank');
+ if(!child){document.querySelector('#result').textContent='Cửa sổ bị chặn';return}
+ child.document.write('<!doctype html><title>Tab ERP thử</title><h1>Tab trắng hoạt động</h1><button onclick="opener.postMessage(\'erp-popup-ok\',\'*\')">Gửi tín hiệu về trang gốc</button>');
+ child.document.close();
+};
+document.querySelector('#two').onclick=()=>{window.open('https://example.com/','_blank');window.open('https://example.org/','_blank')};
+window.addEventListener('message',event=>{if(event.data==='erp-popup-ok')document.querySelector('#result').textContent='Đã nhận tín hiệu từ tab con'});
+</script></html>

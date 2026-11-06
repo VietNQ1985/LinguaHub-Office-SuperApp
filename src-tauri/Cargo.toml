@@ -1,0 +1,68 @@
+[package]
+name = "linguahub-office-superapp"
+version = "0.2.16"
+description = "LinguaHub on Tauri: messaging workspace with on-device chat translation"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "linguahub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `unstable` gives multiple webviews in one window (Window::add_child), needed for the service tabs.
+tauri = { version = "2.12", features = ["unstable", "tray-icon", "image-ico"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "net", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+futures-util = "0.3"
+tokio-util = "0.7"
+tokio-tungstenite = "0.27"
+rusqlite = { version = "0.37", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+regex = "1"
+url = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rand = "0.9"
+anyhow = "1"
+jsonwebtoken = "9"
+log = "0.4"
+cpal = "0.16"
+# Speech to text on the machine (whisper.cpp). CPU build works everywhere; GPU via the "vulkan"/"cuda" features.
+whisper-rs = "0.16"
+
+[features]
+# GPU speech recognition: build with `--features gpu-vulkan` (Vulkan SDK) or `--features gpu-cuda` (CUDA Toolkit).
+gpu-vulkan = ["whisper-rs/vulkan"]
+gpu-cuda = ["whisper-rs/cuda"]
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+# Windows toasts with a click callback (opens the app the notification is about).
+tauri-winrt-notification = "0.8"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_System_Memory",
+  "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = "0.62"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

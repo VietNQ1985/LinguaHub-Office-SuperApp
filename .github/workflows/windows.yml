@@ -1,0 +1,47 @@
+name: Windows checks
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Check version metadata
+        run: npm run version:check
+      - name: Typecheck frontend
+        run: npm run typecheck
+      - name: Run frontend tests
+        run: npm test
+      - name: Build frontend
+        run: npm run build
+      - name: Run Rust tests
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+          AR: C:\Program Files\LLVM\bin\llvm-ar.exe
+      - name: Build Windows installer
+        run: .\scripts\build-windows.ps1 -SkipTests
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+          AR: C:\Program Files\LLVM\bin\llvm-ar.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linguaHub-office-superapp-windows-installer
+          path: src-tauri/target/release/bundle/nsis/*0.2.16*x64-setup.exe
+          if-no-files-found: error
