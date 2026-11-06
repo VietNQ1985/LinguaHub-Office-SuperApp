@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 pub const REASONING_EFFORTS: [&str; 6] = ["none", "low", "medium", "high", "xhigh", "max"];
@@ -24,6 +24,9 @@ const REMEMBER_KEYS: [&str; 9] = [
 pub struct Store {
     conn: Mutex<Connection>,
 }
+
+#[cfg(test)]
+static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -573,6 +576,7 @@ mod tests {
 
     #[test]
     fn stores_settings_and_vocabulary() {
+        let _guard = super::DB_TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("lh-db-test-{}", uuid::Uuid::new_v4()));
         let store = Store::open(&dir).unwrap();
         assert!(!store.remember("chat"));
@@ -597,6 +601,65 @@ mod tests {
         assert_eq!(apps["startup"], "zalo");
         assert_eq!(apps["reviewed"], true);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn office_store_does_not_import_electron_user_data() {
+        let _guard = super::DB_TEST_LOCK.lock().unwrap();
+        let root =
+            std::env::temp_dir().join(format!("lh-db-isolation-test-{}", uuid::Uuid::new_v4()));
+        let legacy_dir = root.join("LinguaHub AI Pro");
+        let office_dir = root.join("com.linguahub.office.superapp");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+
+        let legacy_database = Connection::open(legacy_dir.join("learning.sqlite")).unwrap();
+        legacy_database
+            .execute_batch(
+                "CREATE TABLE vocabulary (
+                    id TEXT PRIMARY KEY,
+                    term TEXT NOT NULL,
+                    meaning TEXT NOT NULL,
+                    phonetic TEXT NOT NULL DEFAULT '',
+                    example TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    created_at INTEGER NOT NULL,
+                    due_at INTEGER NOT NULL,
+                    interval_days INTEGER NOT NULL DEFAULT 0,
+                    ease_factor REAL NOT NULL DEFAULT 2.5,
+                    repetitions INTEGER NOT NULL DEFAULT 0
+                );",
+            )
+            .unwrap();
+        legacy_database
+            .execute(
+                "INSERT INTO vocabulary(id,term,meaning,created_at,due_at) VALUES('legacy','invoice','hoá đơn',?1,?1)",
+                [now_ms()],
+            )
+            .unwrap();
+        drop(legacy_database);
+
+        struct RestoreAppData(Option<std::ffi::OsString>);
+        impl Drop for RestoreAppData {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.0.take() {
+                        Some(value) => std::env::set_var("APPDATA", value),
+                        None => std::env::remove_var("APPDATA"),
+                    }
+                }
+            }
+        }
+
+        let _restore_appdata = RestoreAppData(std::env::var_os("APPDATA"));
+        unsafe { std::env::set_var("APPDATA", &root) };
+
+        let office_store = Store::open(&office_dir).unwrap();
+        assert!(office_store.list().unwrap().is_empty());
+        assert!(office_store.tasks_list().unwrap().is_empty());
+        drop(office_store);
+        drop(_restore_appdata);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 
@@ -699,6 +762,7 @@ mod task_tests {
     use super::*;
     #[test]
     fn reminders_survive_restart_and_do_not_repeat_or_fire_for_completed_tasks() {
+        let _guard = super::DB_TEST_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("lh-task-test-{}", uuid::Uuid::new_v4()));
         let task;
         {
