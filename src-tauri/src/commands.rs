@@ -408,6 +408,42 @@ pub async fn pdf_export_convert(
 }
 
 #[tauri::command]
+pub async fn erp_bookmarklet_launch(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tool: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    let label = match tool.as_str() {
+        "m1a" => "Đối chiếu M1A",
+        "m7k" => "Dashboard M7K / ĐKKN",
+        _ => return Err("Công cụ ERP không hợp lệ.".into()),
+    };
+    let current = state.lock().current.clone();
+    let view = workspace::erp_views(&app)
+        .into_iter()
+        .find(|(id, _)| *id == current)
+        .map(|(_, view)| view)
+        .ok_or("Mở tab ERP trước khi chạy công cụ M1A/M7K.")?;
+    let script = crate::erp_bookmarklets::launch_script(&tool).map_err(fail)?;
+    let result = wv::eval_json(&view, &script).await.map_err(fail)?;
+    if result["ok"] != true {
+        return Err(result["error"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                format!(
+                    "Chưa thấy màn hình phù hợp. Mở {label} trong tab ERP đang xem rồi thử lại."
+                )
+            }));
+    }
+    Ok(
+        json!({"message": format!("Đã mở {label} trong tab ERP hiện tại. Thao tác tiếp trong popup trên phiếu.")}),
+    )
+}
+
+#[tauri::command]
 pub async fn pdf_export_scan_erp_page(
     webview: Webview,
     app: AppHandle,

@@ -41,6 +41,7 @@ window.addEventListener('keydown', event => {
 type Service = 'whatsapp' | 'teams' | 'zalo' | 'zoom' | 'meet'
 
 window.lingua = {
+  launchErpBookmarklet: (tool: 'm1a' | 'm7k') => call('erp_bookmarklet_launch', {tool}),
   pickLocalPath: (folder: boolean) => call('local_path_pick', {folder}),
   setUiFormOpen: (open: boolean) => call('ui_form_open', {open}),
   openLocalPath: (path: string) => call('local_path_open', {path}),

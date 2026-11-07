@@ -23,6 +23,7 @@ import {
   type ErpToolId,
 } from './erpFileTools'
 import { PdfExportPanel } from './PdfExportPanel'
+import { ErpBookmarkletPanel } from './ErpBookmarkletPanel'
 
 type SampleSearchResult = {
   sampleId: string
@@ -590,6 +591,7 @@ export function SampleFilePanel({
         </div>
       </div>
 
+      <ErpBookmarkletPanel />
       {/* Step 1: Sample ID Lookup */}
       <div className="sample-panel-search-card">
         <div className="sample-panel-meta-row">

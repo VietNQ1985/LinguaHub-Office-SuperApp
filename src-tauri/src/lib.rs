@@ -7,6 +7,7 @@ mod chatgpt;
 mod commands;
 mod db;
 mod dialog;
+mod erp_bookmarklets;
 mod local_open;
 mod models;
 mod notify;
@@ -218,6 +219,7 @@ pub fn run() {
             commands::pdf_export_list_source,
             commands::pdf_export_convert,
             commands::pdf_export_scan_erp_page,
+            commands::erp_bookmarklet_launch,
             commands::pdf_export_convert_erp_attachment,
             commands::app_update_check,
             commands::app_update_install,

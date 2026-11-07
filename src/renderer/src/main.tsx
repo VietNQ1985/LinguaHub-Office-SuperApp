@@ -92,6 +92,7 @@ declare global {
       listPdfExportSource(): Promise<import('./erpFileTools').ErpSampleFile[]>
       convertToPdf(path: string, fileName: string): Promise<import('./pdfExport').PdfExportResult>
       scanErpPageAttachments(): Promise<import('./pdfExport').ErpPageSnapshot>
+      launchErpBookmarklet(tool: 'm1a' | 'm7k'): Promise<{message: string}>
       convertErpAttachmentToPdf(
         tabId: string,
         attId: string,
