@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowUp, LoaderCircle, Sparkles } from 'lucide-react'
+import { DEFAULT_CHATGPT_MODEL } from '../../shared/model-reasoning'
 import type { WorkTask } from './WorkTasks'
 
 type Props = {
@@ -24,8 +25,12 @@ export function buildAskRequest(question: string, tasks: WorkTask[], includeTask
   }
 }
 
+export function resolveOfficeModel(preferences: { model?: string; replyModel?: string }) {
+  return preferences.replyModel || preferences.model || DEFAULT_CHATGPT_MODEL
+}
+
 export function OfficePromptBar({ tasks, onConfigureAi }: Props) {
-  const [model, setModel] = useState('')
+  const [model, setModel] = useState(DEFAULT_CHATGPT_MODEL)
   const [question, setQuestion] = useState('')
   const [includeTasks, setIncludeTasks] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -36,11 +41,19 @@ export function OfficePromptBar({ tasks, onConfigureAi }: Props) {
 
   useEffect(() => {
     let active = true
-    void window.lingua.getPreferences().then(preferences => {
-      if (active) setModel(preferences.replyModel || preferences.model)
-    }).catch(() => {})
+    let preferenceRequest = 0
+    const refreshModel = () => {
+      const request = ++preferenceRequest
+      void window.lingua.getPreferences().then(preferences => {
+        if (active && request === preferenceRequest) setModel(resolveOfficeModel(preferences))
+      }).catch(() => {})
+    }
+    refreshModel()
+    window.addEventListener('linguahub:preferences-changed', refreshModel)
     return () => {
       active = false
+      preferenceRequest++
+      window.removeEventListener('linguahub:preferences-changed', refreshModel)
       generation.current++
       if (request.current) void window.lingua.cancelAi(request.current).catch(() => {})
     }

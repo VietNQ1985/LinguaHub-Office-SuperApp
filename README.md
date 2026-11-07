@@ -1,6 +1,6 @@
-# LinguaHub Office SuperApp 0.3.0 (Tauri v2 / Rust)
+# LinguaHub Office SuperApp 0.4.1 (Tauri v2 / Rust)
 
-Bản Office độc lập, kế thừa nền Tauri 0.2.16 của LinguaHub-AI-Pro và bổ sung Office Dashboard. Dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
+Bản Office độc lập, kế thừa nền Tauri 0.2.16 của LinguaHub-AI-Pro và bổ sung Office Dashboard cùng AI Memory có chọn lọc và Prompt Studio phiên bản hoá. Dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
 
 ## Cài đặt và dữ liệu độc lập
 
@@ -44,6 +44,7 @@ GPU cho whisper.cpp (tuỳ chọn): `cargo build --features gpu-vulkan` (cần V
 | Thư mục | Nội dung |
 |---|---|
 | `src/renderer/src` | Giao diện React (khung phải, cài đặt). `bridge.ts` ánh xạ `window.lingua` → lệnh Tauri |
+| `src-tauri/src/office_memory.rs` | Kho SQLite riêng cho dự án, phạm vi capture được duyệt, FTS5, truy xuất RAG, trích dẫn và thư viện prompt có lịch sử phiên bản |
 | `src/page-scripts` | Script chạy trong trang WhatsApp/Telegram/Teams/… (đọc chat, gửi tin, phụ đề) — biên dịch bằng `scripts/gen-page-scripts.ts` ra `src-tauri/page-scripts/*.js` |
 | `src/shared` | Logic dùng chung với bản Electron (điều hướng, chính sách dịch, che dữ liệu…) |
 | `src-tauri/src` | Rust: `lib.rs` (khởi động, tray), `commands.rs` (lệnh IPC), `workspace.rs` (webview con cho từng app), `wv.rs` (eval/CDP WebView2), `ai.rs`/`chatgpt.rs`/`providers.rs` (AI), `stt.rs` (whisper.cpp), `audio.rs` (thu âm hệ thống WASAPI), `db.rs` (SQLite), `secrets.rs` (DPAPI), `notify.rs`, `zalo_pc.rs`, `urls.rs` (danh sách trang được phép) |

@@ -13,6 +13,7 @@ import { ZaloCallBar } from './ZaloCallBar'
 import { ChatGPTAccount } from './ChatGPTAccount'
 import { AdvancedSettings } from './AdvancedSettings'
 import { TaskSuggestions } from './TaskSuggestions'
+import { MemoryCaptureControl } from './MemoryCaptureControl'
 import { DEFAULT_CHATGPT_MODEL, DEFAULT_REASONING_EFFORT, DEFAULT_TRANSLATION_REASONING_EFFORT, isGpt6Model, REASONING_EFFORTS, type ReasoningEffort } from '../../shared/model-reasoning'
 
 type PanelMode = 'translate' | 'settings'
@@ -155,13 +156,17 @@ export function AiPanel({workspaceActive=true}:{workspaceActive?:boolean}) {
   const saveReplyModel = (value: string) => {
     invalidateReply()
     setReplyModel(value)
-    void window.lingua.setPreferences({ theme, model, replyModel: value }).catch(() => setError('Không lưu được mô hình gợi ý.'))
+    void window.lingua.setPreferences({ theme, model, replyModel: value }).then(() => {
+      window.dispatchEvent(new Event('linguahub:preferences-changed'))
+    }).catch(() => setError('Không lưu được mô hình gợi ý.'))
   }
   const saveModel = (value: string) => {
     invalidateReply()
     setModel(value)
     setError('')
-    void window.lingua.setPreferences({ theme, model: value }).catch(() => setError('Không lưu được mô hình AI.'))
+    void window.lingua.setPreferences({ theme, model: value }).then(() => {
+      window.dispatchEvent(new Event('linguahub:preferences-changed'))
+    }).catch(() => setError('Không lưu được mô hình AI.'))
     const slug = value.startsWith('chatgpt:') ? value.slice(8) : ''
     if (isGpt6Model(slug) && !modelReasoningEfforts[slug]?.includes('none') && reasoningEffort === 'none') {
       setReasoningEffort('low')
@@ -379,6 +384,7 @@ export function AiPanel({workspaceActive=true}:{workspaceActive?:boolean}) {
 
     <div className="assistant-content">
       {/* Permissions live in Settings only; features still ask when a permission is needed. */}
+      <MemoryCaptureControl service={service}/>
       {service==='zalo'&&<ZaloCallBar />}
       <div className="meeting-modes" role="group" aria-label="Chế độ dịch"><button type="button" aria-pressed={!meetingMode&&!captionsMode} onClick={()=>{invalidateReply();setMeetingMode(false);setCaptionsMode(false)}} title="Dịch tin nhắn đang hiển thị">{service==='outlook'?'Email':'Tin nhắn'}</button><button type="button" disabled={!meetingCapable} aria-pressed={meetingMode&&!captionsMode} onClick={()=>{invalidateReply();setMeetingMode(true);setCaptionsMode(false)}} title="Dịch phụ đề có sẵn của Teams/Zoom/Meet">Cuộc họp</button><button type="button" aria-pressed={captionsMode} onClick={()=>{invalidateReply();setCaptionsMode(true)}} title="Nghe âm thanh trên máy và tạo phụ đề bằng Whisper">Phụ đề</button></div>
       {mode === 'translate' && chatCapable && <TaskSuggestions service={service} model={replyAi} active={workspaceActive} />}

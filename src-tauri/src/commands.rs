@@ -2042,6 +2042,279 @@ pub fn tasks_delete(webview: Webview, state: State<AppState>, id: String) -> Res
     state.store.task_delete(&id).map_err(fail)
 }
 
+// ---------- local, opt-in AI memory ----------
+
+#[tauri::command]
+pub fn memory_projects_list(webview: Webview, state: State<AppState>) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state.office_memory.projects_list().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_project_save(
+    webview: Webview,
+    state: State<AppState>,
+    id: Option<String>,
+    name: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .project_save(id.as_deref(), &name)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_project_delete(webview: Webview, state: State<AppState>, id: String) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.project_delete(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_capture_scopes_list(webview: Webview, state: State<AppState>) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state.office_memory.capture_scopes_list().map_err(fail)
+}
+
+/// Called from the contextual panel while a workspace is visible. Visible-chat read and memory
+/// capture are separate grants; this command requires both and only enables this conversation.
+#[tauri::command]
+pub async fn memory_capture_visible(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    account_label: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    let provider = {
+        let inner = state.lock();
+        if !inner.chat_read_authorized || inner.chat_read_paused {
+            return Err(
+                "Cần cấp quyền đọc hội thoại đang hiển thị riêng trước khi lưu vào AI Memory."
+                    .into(),
+            );
+        }
+        inner.current.clone()
+    };
+    let snapshot = workspace::read_visible(&app).await.map_err(fail)?;
+    let conversation_id = snapshot["conversationId"]
+        .as_str()
+        .ok_or("Không nhận diện được hội thoại đang hiển thị.")?;
+    let messages = snapshot["messages"]
+        .as_array()
+        .ok_or("Không đọc được tin nhắn trong hội thoại.")?;
+    if messages.is_empty() {
+        return Err("Hội thoại đang hiển thị chưa có nội dung chữ để lưu.".into());
+    }
+    let account_key = crate::office_memory::account_key(&provider, &account_label);
+    let display_name = format!(
+        "Hội thoại {}",
+        &conversation_id[..8.min(conversation_id.len())]
+    );
+    let source_url = app
+        .get_webview(&format!("svc-{provider}"))
+        .and_then(|view| view.url().ok())
+        .map(|url| url.to_string());
+    state
+        .office_memory
+        .set_capture_scope(
+            &provider,
+            &account_key,
+            &account_label,
+            conversation_id,
+            &project_id,
+            &display_name,
+            true,
+            true,
+        )
+        .map_err(fail)?;
+    state
+        .office_memory
+        .ingest_approved_event(
+            &provider,
+            &account_key,
+            conversation_id,
+            source_url.as_deref(),
+            messages,
+        )
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_set_capture_enabled(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+    enabled: bool,
+    confirmed: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .set_capture_enabled(&id, enabled, confirmed)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_pause_all(webview: Webview, state: State<AppState>) -> Res<usize> {
+    trusted(&webview)?;
+    state.office_memory.pause_all().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_remove_capture_scope(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.remove_capture_scope(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_search(
+    webview: Webview,
+    state: State<AppState>,
+    query: String,
+    project_id: Option<String>,
+    provider: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    limit: usize,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .search(
+            &query,
+            project_id.as_deref(),
+            provider.as_deref(),
+            from,
+            to,
+            limit,
+        )
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_get_source(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+) -> Res<Option<Value>> {
+    trusted(&webview)?;
+    state.office_memory.get_record(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_delete_source(webview: Webview, state: State<AppState>, id: String) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.delete_record(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_rebuild_index(webview: Webview, state: State<AppState>) -> Res<usize> {
+    trusted(&webview)?;
+    state.office_memory.rebuild_index().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_export_project(
+    webview: Webview,
+    state: State<AppState>,
+    project_id: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .export_project(&project_id)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompts_list(
+    webview: Webview,
+    state: State<AppState>,
+    project_id: Option<String>,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompts_list(project_id.as_deref())
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_versions(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_versions(&prompt_id)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_save(webview: Webview, state: State<AppState>, input: Value) -> Res<Value> {
+    trusted(&webview)?;
+    state.office_memory.prompt_save(&input).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_activate(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+    version: i64,
+) -> Res<()> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_activate(&prompt_id, version)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_delete(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.prompt_delete(&prompt_id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prepare_prompt(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+    query: String,
+    project_id: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    top_k: usize,
+    variables: Value,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_prepare(
+            &prompt_id,
+            &query,
+            project_id.as_deref(),
+            from,
+            to,
+            top_k,
+            &variables,
+        )
+        .map_err(fail)
+}
+
 #[tauri::command]
 pub fn tasks_workspace(
     webview: Webview,
