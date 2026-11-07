@@ -30,7 +30,8 @@ try {
         }
     }
 
-    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    $profileRoot = $env:USERPROFILE.Trim()
+    $cargoBin = Join-Path $profileRoot '.cargo\bin'
     if (Test-Path $cargoBin) { $env:PATH = "$cargoBin;$env:PATH" }
 
     if ($TargetDir) {
