@@ -12,6 +12,7 @@ import type {UnreadCounts} from '../../shared/workspace-unread'
 import { APP_ITEMS, AppsPanel, type AppId, type AppsSettings } from './AppsPanel'
 import { AppLogo } from './AppLogo'
 import { OfficeDashboard } from './OfficeDashboard'
+import { OfficeProjectHub } from './OfficeProjectHub'
 import { OfficeGlobalSearch, OfficeNotifications, OfficeSidebar, OFFICE_NAV_ITEMS, type OfficeArea } from './OfficeNavigation'
 import { ArrowLeft, Moon, PanelRightClose, PanelRightOpen, RefreshCw, Settings, Sun, Wifi, WifiOff } from 'lucide-react'
 
@@ -404,7 +405,7 @@ function App() {
   const navigateArea = async (area:OfficeArea, recordHistory=true) => {
     if(recordHistory&&area!==activeAreaRef.current)areaHistory.current.push(activeAreaRef.current)
     if(area==='tasks'){await openTasks(false);return}
-    if(area==='projects'){await openErp();return}
+    if(area==='projects'){await showOfficePage(area);return}
     if(area==='messages'){
       const current=activeService!=='outlook'&&apps?.includes(activeService)?activeService:apps?.find(value=>value!=='outlook')
       if(current){await open(current,'messages');return}
@@ -493,8 +494,9 @@ function App() {
           {activeArea==='tasks'&&tasksOpen&&<WorkTasks service={erpOpen?(webTabs.find(tab=>tab.id===activeWeb)?.name||'ERP'):activeService} model={taskModel} sourceSnapshot={taskSource} onBack={goBack}/>}
           {activeArea==='tasks'&&!tasksOpen&&<div className="workspace-placeholder">Đang mở danh sách công việc…</div>}
 
-          {activeArea==='projects'&&!sampleFinderOpen&&<>
-            {erpOpen&&!webTabs.some(tab=>tab.id===activeWeb)?<div className="erp-empty-state"><div><span aria-hidden="true">▣</span><h2>Không gian ERP</h2><p>Mỗi màn hình ERP có tab riêng và phiên đăng nhập được giữ trên máy này.</p><div><button type="button" className="primary-button" onClick={()=>void openErp()}>Mở Arito</button><button type="button" className="secondary-button" onClick={addWeb}>Thêm địa chỉ ERP</button></div></div></div>:!erpOpen?<div className="workspace-placeholder">Đang mở workspace ERP…</div>:<div className="workspace-placeholder">Đang mở workspace ERP…</div>}
+          {activeArea==='projects'&&!erpOpen&&!sampleFinderOpen&&<OfficeProjectHub workspaces={webTabs.filter(tab=>!tab.transient)} activeId={activeWeb} onOpenWorkspace={tab=>void openWeb(tab)} onOpenRecent={()=>void openErp()} onAddWorkspace={addWeb} onManageApps={openWorkspaceManagement}/>}
+          {activeArea==='projects'&&erpOpen&&!sampleFinderOpen&&<>
+            {!webTabs.some(tab=>tab.id===activeWeb)?<div className="erp-empty-state"><div><span aria-hidden="true">▣</span><h2>Không gian ERP</h2><p>Mỗi màn hình ERP có tab riêng và phiên đăng nhập được giữ trên máy này.</p><div><button type="button" className="primary-button" onClick={()=>void openErp()}>Mở Arito</button><button type="button" className="secondary-button" onClick={addWeb}>Thêm địa chỉ ERP</button></div></div></div>:<div className="workspace-placeholder">Đang mở workspace ERP…</div>}
             {fallbackService&&<div className="workspace-fallback"><h2>Chưa mở được workspace</h2><p>Trang này có thể không hỗ trợ chạy bên trong ứng dụng. Anh có thể mở bằng trình duyệt.</p><button type="button" onClick={()=>void openFallback()}>Mở bằng trình duyệt</button></div>}
           </>}
           {activeArea==='projects'&&sampleFinderOpen&&<SampleFileFinder onClose={closeSampleFinder}/>}
