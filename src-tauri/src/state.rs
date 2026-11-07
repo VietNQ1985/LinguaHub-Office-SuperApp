@@ -4,6 +4,7 @@ use crate::audio::Loopback;
 use crate::chatgpt::ChatGpt;
 use crate::db::Store;
 use crate::models::ModelProxy;
+use crate::office_memory::OfficeMemory;
 use crate::providers::Providers;
 use crate::stt::Stt;
 use serde_json::Value;
@@ -64,6 +65,7 @@ pub struct Inner {
 
 pub struct AppState {
     pub store: Store,
+    pub office_memory: OfficeMemory,
     pub chatgpt: ChatGpt,
     pub providers: Providers,
     pub models: ModelProxy,
@@ -79,6 +81,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(directory: &std::path::Path) -> anyhow::Result<Self> {
         let store = Store::open(directory)?;
+        let office_memory = OfficeMemory::open(directory)?;
         let chatgpt = ChatGpt::load(directory);
         let providers = Providers::load(directory);
         let models = ModelProxy::new(directory);
@@ -117,6 +120,7 @@ impl AppState {
         };
         Ok(AppState {
             store,
+            office_memory,
             chatgpt,
             providers,
             models,

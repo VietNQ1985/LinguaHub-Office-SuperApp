@@ -618,14 +618,12 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         let Some(webview) = app.get_webview(&label) else {
             continue;
         };
-        let service_tabs_height = if matches!(
-            current.as_str(),
-            "whatsapp" | "telegram" | "teams" | "zalo"
-        ) {
-            service_tabs_height
-        } else {
-            0.0
-        };
+        let service_tabs_height =
+            if matches!(current.as_str(), "whatsapp" | "telegram" | "teams" | "zalo") {
+                service_tabs_height
+            } else {
+                0.0
+            };
         let top = HEADER
             + service_tabs_height
             + if current.starts_with("web-") {
@@ -1131,6 +1129,22 @@ pub fn start_polling<R: Runtime>(app: AppHandle<R>) {
                     if changed_at > previous && previous > 0.0
                         || (previous == 0.0 && changed_at > 0.0)
                     {
+                        if state.office_memory.has_enabled_provider(&service) {
+                            if let Ok(snapshot) = read_visible(&app).await {
+                                if let (Some(conversation_id), Some(messages)) = (
+                                    snapshot["conversationId"].as_str(),
+                                    snapshot["messages"].as_array(),
+                                ) {
+                                    let source_url = webview.url().ok().map(|url| url.to_string());
+                                    let _ = state.office_memory.ingest_observed_event(
+                                        &service,
+                                        conversation_id,
+                                        source_url.as_deref(),
+                                        messages,
+                                    );
+                                }
+                            }
+                        }
                         let _ = app.emit_to(
                             "ui",
                             "chat-visible-changed",

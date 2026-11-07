@@ -10,6 +10,7 @@ mod dialog;
 mod local_open;
 mod models;
 mod notify;
+mod office_memory;
 mod providers;
 mod sample_files;
 mod secrets;
@@ -245,6 +246,25 @@ pub fn run() {
             commands::chat_read_visible,
             commands::chat_send_confirm,
             commands::chat_send_direct,
+            commands::memory_projects_list,
+            commands::memory_project_save,
+            commands::memory_project_delete,
+            commands::memory_capture_scopes_list,
+            commands::memory_capture_visible,
+            commands::memory_set_capture_enabled,
+            commands::memory_pause_all,
+            commands::memory_remove_capture_scope,
+            commands::memory_search,
+            commands::memory_get_source,
+            commands::memory_delete_source,
+            commands::memory_rebuild_index,
+            commands::memory_export_project,
+            commands::memory_prompts_list,
+            commands::memory_prompt_versions,
+            commands::memory_prompt_save,
+            commands::memory_prompt_activate,
+            commands::memory_prompt_delete,
+            commands::memory_prepare_prompt,
             commands::zalo_call_via_pc,
             commands::ai_models,
             commands::ai_run,

@@ -1,8 +1,8 @@
-# LinguaHub Office SuperApp 0.3.0 — Hướng dẫn sử dụng
+# LinguaHub Office SuperApp 0.4.0 — Hướng dẫn sử dụng
 
 LinguaHub gom các ứng dụng nhắn tin/họp (WhatsApp, Telegram, Microsoft Teams, Outlook, Zalo Web, Zoom, Google Meet) vào một cửa sổ. Khung bên phải dịch tin nhắn sang tiếng Việt, gợi ý câu trả lời bằng tiếng Anh và có phụ đề cuộc họp.
 
-Bản Office 0.3.0 bổ sung Dashboard và điều hướng workspace; bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
+Bản Office 0.4.0 bổ sung AI Memory có chọn lọc và Prompt Studio; Dashboard và điều hướng workspace của bản 0.3.0 vẫn được giữ nguyên. Bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
 
 | | Bản Tauri (Rust) — khuyên dùng | Bản Electron |
 |---|---|---|
@@ -86,16 +86,33 @@ Cài đặt chia thành 5 nhóm:
 
 Gồm từ vựng rút ra từ các cuộc chat, lịch ôn, bài học trong ngày và luyện nói (ghi âm rồi nghe lại).
 
-## 8. Quyền riêng tư
+## 8. AI Memory và Prompt Studio
+
+AI Memory mặc định không lưu hội thoại. Muốn lưu một nguồn:
+
+1. Tạo hoặc chọn dự án trong **AI Memory → Nguồn bộ nhớ**.
+2. Mở đúng hội thoại trong một ứng dụng được hỗ trợ, rồi mở **AI Memory · lưu hội thoại này** ở panel bên phải.
+3. Nhập nhãn tài khoản, chọn dự án và xác nhận đúng ứng dụng, tài khoản, dự án. LinguaHub hỏi riêng quyền đọc chat đang hiển thị.
+4. Chỉ hội thoại đang mở được bật. Nội dung đang hiển thị được lưu một lần; các thay đổi tiếp theo được ghi khi hội thoại đó đang hiển thị và vẫn thuộc phạm vi đã chọn. Dừng nguồn trước khi đổi tài khoản.
+
+Nhãn tài khoản do người dùng xác nhận; LinguaHub hiện chưa tự xác minh danh tính tài khoản trên mọi nền tảng. Nếu có nhiều phạm vi trùng ứng dụng và mã hội thoại, app sẽ không tự capture do không xác định được tài khoản duy nhất.
+
+Tab **Khám phá** tìm kiếm toàn văn trong nguồn đang bật, có thể lọc theo dự án, ứng dụng và ngày. Từ đây có thể xem, xoá từng bản ghi, xuất dự án JSON, tạo lại chỉ mục, dừng một nguồn hoặc dừng tất cả. Xoá dự án sẽ xoá các bản ghi và prompt thuộc dự án.
+
+Tab **Prompt Studio** cho phép khai báo chỉ dẫn, quy tắc và mẫu prompt dùng chung hoặc theo dự án. Mỗi lần lưu tạo phiên bản mới; có thể xem lịch sử và khôi phục phiên bản trước. Khi chạy prompt, RAG chỉ lấy tối đa 8 đoạn liên quan từ dự án được chọn, hiển thị mã trích dẫn và cho mở lại nguồn. Nội dung phân tích chỉ là kết quả AI; không tự xác nhận đề xuất thành quyết định hay lưu nó thành bộ nhớ mới.
+
+AI Memory dùng tệp SQLite riêng `office-memory.sqlite` trong thư mục dữ liệu Office. Tệp này hiện chưa được mã hoá. Nếu chọn mô hình đám mây, quyền gửi AI được kiểm tra riêng và các đoạn bằng chứng truy xuất có thể được gửi cho nhà cung cấp mô hình.
+
+## 9. Quyền riêng tư
 
 - Bản Office SuperApp lưu dữ liệu tại `%APPDATA%\com.linguahub.office.superapp`; hồ sơ WebView2 và phiên đăng nhập nằm trong `%LOCALAPPDATA%\com.linguahub.office.superapp`. Các thư mục này tách biệt với LinguaHub AI Pro 0.2.16.
 - Bản Office SuperApp tạo kho SQLite mới, không tự dò hoặc sao chép dữ liệu từ LinguaHub AI Pro hay bản Electron. Muốn chuyển dữ liệu thì cần một quy trình nhập riêng có xác nhận của người dùng.
 
-- Không lưu nội dung chat, mật khẩu hay cookie vào cơ sở dữ liệu của app.
+- Mặc định không lưu nội dung chat. Chỉ nội dung thuộc nguồn AI Memory được người dùng bật rõ ràng mới được lưu trong `office-memory.sqlite`; tệp này hiện chưa được mã hoá. Mật khẩu và cookie phiên đăng nhập không được lưu vào cơ sở dữ liệu của app.
 - API key và token ChatGPT được mã hoá bằng Windows (DPAPI) và chỉ dùng được trên máy này, dưới tài khoản Windows này.
 - Dùng Ollama và nhận dạng giọng nói trên máy thì không có gì gửi ra ngoài. Dùng ChatGPT/Gemini thì chữ tin nhắn được gửi tới nhà cung cấp đó, và app hỏi xác nhận riêng trước.
 
-## 9. Lỗi thường gặp
+## 10. Lỗi thường gặp
 
 | Hiện tượng | Cách xử lý |
 |---|---|

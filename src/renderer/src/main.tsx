@@ -15,6 +15,8 @@ import { OfficeDashboard } from './OfficeDashboard'
 import { OfficeProjectHub } from './OfficeProjectHub'
 import { OfficeServiceSwitcher } from './OfficeServiceSwitcher'
 import { OfficeGlobalSearch, OfficeNotifications, OfficeSidebar, OFFICE_NAV_ITEMS, type OfficeArea } from './OfficeNavigation'
+import { MemoryStudio } from './MemoryStudio'
+import type { MemoryCaptureResult, MemoryProject, MemoryProjectExport, MemoryPrompt, MemoryPromptVersion, MemoryRecord, MemoryScope, MemorySearchOptions, PreparedMemoryPrompt } from './memory-types'
 import { ArrowLeft, Moon, PanelRightClose, PanelRightOpen, RefreshCw, Settings, Sun, Wifi, WifiOff } from 'lucide-react'
 
 const AiPanel = React.lazy(() => import('./AiPanel').then(module => ({ default: module.AiPanel })))
@@ -64,6 +66,25 @@ declare global {
       getPermissions(): Promise<{ chat: boolean; mic: boolean; captions: boolean; teams: boolean; zoom: boolean; meet: boolean; zalo: boolean; reviewed: boolean }>
       setPermissions(grants: { chat: boolean; mic: boolean; captions: boolean; teams: boolean; zoom: boolean; meet: boolean; zalo: boolean }): Promise<boolean>
       readVisibleChat(): Promise<{ conversationId: string; text: string; messages: Array<{ text: string; side: 'left' | 'right' | 'center'; id?: string }> } | null>
+      memoryProjectsList(): Promise<MemoryProject[]>
+      memoryProjectSave(id: string | null, name: string): Promise<MemoryProject>
+      memoryProjectDelete(id: string): Promise<void>
+      memoryCaptureScopesList(): Promise<MemoryScope[]>
+      memoryCaptureVisible(projectId: string, accountLabel: string): Promise<MemoryCaptureResult>
+      memorySetCaptureEnabled(id: string, enabled: boolean, confirmed: boolean): Promise<void>
+      memoryPauseAll(): Promise<number>
+      memoryRemoveCaptureScope(id: string): Promise<void>
+      memorySearch(query: string, options: MemorySearchOptions): Promise<MemoryRecord[]>
+      memoryGetSource(id: string): Promise<MemoryRecord | null>
+      memoryDeleteSource(id: string): Promise<void>
+      memoryRebuildIndex(): Promise<number>
+      memoryExportProject(projectId: string): Promise<MemoryProjectExport>
+      memoryPromptsList(projectId?: string | null): Promise<MemoryPrompt[]>
+      memoryPromptVersions(promptId: string): Promise<MemoryPromptVersion[]>
+      memoryPromptSave(input: Omit<MemoryPrompt, 'id' | 'version' | 'createdAt'> & { id?: string | null }): Promise<MemoryPrompt>
+      memoryPromptActivate(promptId: string, version: number): Promise<void>
+      memoryPromptDelete(promptId: string): Promise<void>
+      memoryPreparePrompt(promptId: string, query: string, projectId: string | null, from: number | null, to: number | null, topK: number, variables: Record<string, string>): Promise<PreparedMemoryPrompt>
       onVisibleChatChanged(callback: (change: {service:WorkspaceService;observedAt:number}) => void): () => void
       listVocabulary(): Promise<import('./Vocabulary').Word[]>
       addVocabulary(input: { term: string; meaning: string }): Promise<void>
@@ -520,7 +541,7 @@ function App() {
 
           {activeArea==='documents'&&!sampleFinderOpen&&<section className="office-feature-page" aria-labelledby="office-documents-title"><span className="office-eyebrow">TÀI LIỆU TRÊN MÁY</span><h2 id="office-documents-title">Mở tệp do anh chọn</h2><p>LinguaHub chỉ mở đường dẫn được chọn trong Explorer; trang này chưa lập chỉ mục toàn bộ ổ đĩa hay đồng bộ tài liệu.</p><div className="office-feature-actions"><button type="button" className="primary-button" onClick={()=>{setPanelCollapsed(false);setWorkspaceForm('path')}}>Mở tệp hoặc thư mục trên Windows</button><button type="button" className="secondary-button" onClick={()=>void openDocumentsSampleFinder()}>Tra tệp theo Sample ID</button></div></section>}
 
-          {activeArea==='memory'&&<section className="office-feature-page office-future-page" aria-labelledby="office-memory-title"><span className="office-eyebrow">CHƯA BẬT · ISSUE #8</span><h2 id="office-memory-title">AI Memory Explorer</h2><p>Chưa có nguồn nào được chọn để lưu. Bản này không tự ghi lại chat, email, tài liệu hoặc hoạt động dự án. Chọn nguồn và tìm kiếm lịch sử sẽ được triển khai cùng AI Memory Engine.</p><div className="office-permission-note"><strong>Trạng thái quyền riêng tư</strong><span>Không có capture tự động đang chạy.</span></div></section>}
+          {activeArea==='memory'&&<MemoryStudio />}
 
           {activeArea==='translation'&&<section className="office-feature-page" aria-labelledby="office-translation-title"><span className="office-eyebrow">DỊCH THUẬT</span><h2 id="office-translation-title">Dịch tin nhắn, email và cuộc họp</h2><p>Mở một workspace để dịch nội dung đang hiển thị. Dịch phụ đề cuộc họp và gợi ý trả lời vẫn dùng các quyền riêng hiện có.</p><div className="office-feature-actions"><button type="button" className="primary-button" onClick={()=>setPanelCollapsed(false)}>Mở trợ lý theo ngữ cảnh</button><button type="button" className="secondary-button" onClick={()=>void navigateArea('messages')}>Mở tin nhắn</button><button type="button" className="secondary-button" onClick={()=>void navigateArea('email')}>Mở Outlook</button></div></section>}
 

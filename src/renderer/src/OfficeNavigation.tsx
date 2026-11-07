@@ -85,7 +85,7 @@ export function OfficeSidebar({
         {!collapsed && <span>Quản lý ứng dụng</span>}
       </button>
       <div className="office-version" title="LinguaHub Office SuperApp · © 2026 Viet Nguyen Quoc">
-      {collapsed ? <span aria-label="Phiên bản 0.3.0">0.3.0</span> : <><span>LinguaHub Office SuperApp · v0.3.0</span><small>© 2026 Viet Nguyen Quoc</small></>}
+      {collapsed ? <span aria-label="Phiên bản 0.4.0">0.4.0</span> : <><span>LinguaHub Office SuperApp · v0.4.0</span><small>© 2026 Viet Nguyen Quoc</small></>}
       </div>
     </div>
   </aside>
