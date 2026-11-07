@@ -23,6 +23,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
 pub const HEADER: f64 = 64.0;
 /// The ERP child-tab strip rendered directly below the main navigation.
 pub const ERP_TABS_HEIGHT: f64 = 40.0;
+/// The message app switcher rendered below the office navigation.
+pub const SERVICE_SWITCHER_HEIGHT: f64 = 42.0;
 
 #[cfg(windows)]
 #[derive(Clone)]
@@ -594,7 +596,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     };
     let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
     let state = app.state::<AppState>();
-    let (current, panel, divider, dialog_open, labels, sidebar_width) = {
+    let (current, panel, divider, dialog_open, labels, sidebar_width, service_tabs_height) = {
         let inner = state.lock();
         let panel = if inner.panel_collapsed {
             56.0
@@ -609,13 +611,23 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             inner.dialog_open > 0 || inner.ui_form_open,
             inner.views.clone(),
             inner.sidebar_width,
+            inner.service_tabs_height,
         )
     };
     for label in labels {
         let Some(webview) = app.get_webview(&label) else {
             continue;
         };
+        let service_tabs_height = if matches!(
+            current.as_str(),
+            "whatsapp" | "telegram" | "teams" | "zalo"
+        ) {
+            service_tabs_height
+        } else {
+            0.0
+        };
         let top = HEADER
+            + service_tabs_height
             + if current.starts_with("web-") {
                 ERP_TABS_HEIGHT
             } else {
@@ -991,13 +1003,22 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
     });
     let scale = window.scale_factor().unwrap_or(1.0);
     let size = window.inner_size()?;
-    let sidebar_width = state.lock().sidebar_width;
+    let (sidebar_width, service_tabs_height) = {
+        let inner = state.lock();
+        let service_tabs_height = if matches!(service, "whatsapp" | "telegram" | "teams" | "zalo") {
+            inner.service_tabs_height
+        } else {
+            0.0
+        };
+        (inner.sidebar_width, service_tabs_height)
+    };
+    let top = HEADER + service_tabs_height;
     let webview = window.add_child(
         builder,
-        LogicalPosition::new(sidebar_width, HEADER),
+        LogicalPosition::new(sidebar_width, top),
         LogicalSize::new(
             (size.width as f64 / scale - sidebar_width - 400.0).max(300.0),
-            (size.height as f64 / scale - HEADER).max(100.0),
+            (size.height as f64 / scale - top).max(100.0),
         ),
     )?;
     let _ = wv::install_permissions(&webview, service_permissions(app, service_owned.clone()));

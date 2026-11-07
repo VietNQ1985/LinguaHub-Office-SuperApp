@@ -196,6 +196,7 @@ pub fn run() {
             commands::window_always_on_top,
             commands::workspace_panel_layout,
             commands::workspace_sidebar_layout,
+            commands::workspace_service_tabs_layout,
             commands::workspace_unread,
             commands::workspace_open,
             commands::web_tab_open,

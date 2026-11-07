@@ -13,6 +13,7 @@ import { APP_ITEMS, AppsPanel, type AppId, type AppsSettings } from './AppsPanel
 import { AppLogo } from './AppLogo'
 import { OfficeDashboard } from './OfficeDashboard'
 import { OfficeProjectHub } from './OfficeProjectHub'
+import { OfficeServiceSwitcher } from './OfficeServiceSwitcher'
 import { OfficeGlobalSearch, OfficeNotifications, OfficeSidebar, OFFICE_NAV_ITEMS, type OfficeArea } from './OfficeNavigation'
 import { ArrowLeft, Moon, PanelRightClose, PanelRightOpen, RefreshCw, Settings, Sun, Wifi, WifiOff } from 'lucide-react'
 
@@ -27,6 +28,7 @@ declare global {
       pickLocalPath(folder:boolean):Promise<string|null>
       setUiFormOpen(open:boolean):Promise<void>
       setWorkspaceSidebarLayout(collapsed:boolean):void
+      setWorkspaceServiceTabsLayout(visible:boolean):Promise<void>
       openLocalPath(path: string): Promise<boolean>
       getSampleSearchRoots(): Promise<string[]>
       addSampleSearchRoot(path: string): Promise<string[]>
@@ -216,7 +218,8 @@ function App() {
 
   const open = React.useCallback(async (service: WorkspaceService, targetArea?: OfficeArea) => {
     const current=++operation.current
-    setActiveArea(targetArea || (service === 'outlook' ? 'email' : 'messages'))
+    const nextArea = targetArea || (service === 'outlook' ? 'email' : 'messages')
+    setActiveArea(nextArea)
     setTasksOpen(false)
     setSampleFinderOpen(false)
     setErpOpen(false)
@@ -226,6 +229,7 @@ function App() {
 
     setStatus(service === 'telegram' ? 'Đang mở Telegram…' : service === 'outlook' ? 'Đang mở Outlook…' : service === 'whatsapp' ? 'Đang mở WhatsApp…' : service==='zalo'?'Đang mở Zalo Web…':service==='zoom'?'Đang mở Zoom…':service==='meet'?'Đang mở Google Meet…':'Đang mở Teams…')
     try {
+      await window.lingua.setWorkspaceServiceTabsLayout(nextArea === 'messages' && ['whatsapp','telegram','teams','zalo'].includes(service)).catch(() => {})
       await window.lingua.openWorkspace(service)
       if(current!==operation.current)return
       window.dispatchEvent(new CustomEvent('linguahub:service',{detail:service}))
@@ -473,6 +477,8 @@ function App() {
           <button type="button" className="office-icon-button" title={panelCollapsed?'Mở trợ lý AI':'Thu gọn trợ lý AI'} aria-label={panelCollapsed?'Mở trợ lý AI':'Thu gọn trợ lý AI'} onClick={()=>setPanelCollapsed(value=>!value)}>{panelCollapsed?<PanelRightOpen size={18} aria-hidden="true" />:<PanelRightClose size={18} aria-hidden="true" />}</button>
         </div>
       </header>
+
+      {activeArea==='messages'&&!tasksOpen&&!needsSetup&&apps&&apps.some(app=>['whatsapp','telegram','teams','zalo'].includes(app))&&<OfficeServiceSwitcher enabled={apps} active={activeService} unread={unread} onSelect={service=>void open(service,'messages')}/>}
 
       {activeArea==='projects'&&erpOpen&&!tasksOpen&&<nav className="erp-subtabs" aria-label="Các tab trong ERP">
         {webTabs.map((tab,index)=><div className={activeWeb===tab.id?'erp-subtab active':'erp-subtab'} key={tab.id}>
