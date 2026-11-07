@@ -210,6 +210,7 @@ pub fn run() {
             commands::sample_search_template,
             commands::sample_search_template_set,
             commands::sample_files_search,
+            commands::sample_file_inspect,
             commands::workspace_dashboard,
             commands::workspace_external,
             commands::workspace_reload,

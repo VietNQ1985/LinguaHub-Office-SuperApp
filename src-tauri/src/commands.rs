@@ -3,7 +3,7 @@
 
 use crate::ai::{self, ExternalFn, Responder, TextFn, Timing};
 use crate::dialog::{self, Ask};
-use crate::sample_files::{self, SampleSearchResult};
+use crate::sample_files::{self, SampleFileInspection, SampleSearchResult};
 use crate::state::AppState;
 use crate::urls;
 use crate::workspace;
@@ -332,6 +332,20 @@ pub async fn sample_files_search(
     .await
     .map_err(fail)?
     .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn sample_file_inspect(
+    webview: Webview,
+    state: State<'_, AppState>,
+    path: String,
+) -> Res<SampleFileInspection> {
+    trusted(&webview)?;
+    let roots = state.store.sample_search_roots();
+    tokio::task::spawn_blocking(move || sample_files::inspect_file(&path, &roots))
+        .await
+        .map_err(fail)?
+        .map_err(fail)
 }
 
 #[tauri::command]
@@ -1170,13 +1184,33 @@ fn cloud_provider_name(model: &str) -> Option<&'static str> {
 }
 
 fn has_cloud_consent_for_task(task: &str, manual: bool, background: bool) -> bool {
-    if matches!(
+    if task == "summary" {
+        manual || background
+    } else if matches!(
         task,
         "translateLatest" | "translateMessages" | "replyFromChat" | "replyTranslationFromChat"
     ) {
         background
     } else {
         manual
+    }
+}
+
+#[cfg(test)]
+mod cloud_consent_tests {
+    use super::has_cloud_consent_for_task;
+
+    #[test]
+    fn summary_accepts_the_consent_used_by_its_caller() {
+        assert!(has_cloud_consent_for_task("summary", true, false));
+        assert!(has_cloud_consent_for_task("summary", false, true));
+        assert!(!has_cloud_consent_for_task("summary", false, false));
+    }
+
+    #[test]
+    fn background_translation_still_requires_background_consent() {
+        assert!(has_cloud_consent_for_task("translateLatest", false, true));
+        assert!(!has_cloud_consent_for_task("translateLatest", true, false));
     }
 }
 
@@ -1480,7 +1514,7 @@ pub async fn chatgpt_background_cloud_consent(
     if state.lock().background_cloud_consent {
         return Ok(true);
     }
-    let (response, _) = dialog::ask(&app, Ask::question("Cho phép dịch tin nhắn hiển thị bằng ChatGPT?", "Gửi chữ lấy từ các tin nhắn đang hiển thị đến OpenAI để dịch tự động?", "LinguaHub đọc nội dung chữ từ trang ngay trên máy. Chỉ chữ của bong bóng tin đang hiển thị được gửi; không gửi ảnh chụp hoặc nội dung chat ẩn. Bật che email/số điện thoại sẽ áp dụng trước khi gửi nhưng có thể bỏ sót. Dừng dịch để ngừng gửi chữ. Anh có thể từ chối và dùng Ollama trên máy.", ["Không cho phép", "Cho phép gửi chữ hiển thị"])).await;
+    let (response, _) = dialog::ask(&app, Ask::question("Cho phép xử lý chat/email bằng ChatGPT?", "Gửi chữ chat/email đang hiển thị đến OpenAI để dịch nền hoặc tự động gợi ý công việc?", "LinguaHub chỉ gửi chữ đang hiển thị; không gửi ảnh chụp hoặc nội dung chat/email ẩn. Quyền cloud nền chỉ giữ trong phiên app này và sẽ được hỏi lại lần sau. Bật che email/số điện thoại sẽ áp dụng trước khi gửi nhưng có thể bỏ sót. Anh có thể từ chối và dùng Ollama trên máy.", ["Không cho phép", "Cho phép gửi chữ hiển thị"])).await;
     let allowed = response == 1;
     state.lock().background_cloud_consent = allowed;
     Ok(allowed)
@@ -1520,12 +1554,23 @@ pub fn chatgpt_usage_settings(webview: Webview) -> Res<()> {
 pub fn providers_status(webview: Webview, state: State<AppState>) -> Res<Value> {
     trusted(&webview)?;
     let secrets = state.providers.get();
+    let (chatgpt_manual_consent, chatgpt_background_consent, masking) = {
+        let inner = state.lock();
+        (
+            inner.cloud_consent,
+            inner.background_cloud_consent,
+            inner.masking,
+        )
+    };
     Ok(json!({
         "geminiKeySet": secrets.gemini_key.is_some(),
         "remoteUrl": secrets.remote_url.unwrap_or_default(),
         "remoteTokenSet": secrets.remote_token.is_some(),
         "geminiConsent": state.store.provider_consent("gemini"),
         "remoteConsent": state.store.provider_consent("remote"),
+        "chatgptManualConsent": chatgpt_manual_consent,
+        "chatgptBackgroundConsent": chatgpt_background_consent,
+        "masking": masking,
     }))
 }
 
@@ -1548,6 +1593,16 @@ pub fn providers_consent(
     enabled: bool,
 ) -> Res<bool> {
     trusted(&webview)?;
+    if provider == "chatgpt_manual" && !enabled {
+        state.store.set_manual_cloud_consent(false).map_err(fail)?;
+        let mut inner = state.lock();
+        inner.cloud_consent = false;
+        return Ok(false);
+    }
+    if provider == "chatgpt_background" && !enabled {
+        state.lock().background_cloud_consent = false;
+        return Ok(false);
+    }
     state
         .store
         .set_provider_consent(&provider, enabled)

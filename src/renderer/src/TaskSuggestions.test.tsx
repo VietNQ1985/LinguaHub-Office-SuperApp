@@ -33,3 +33,24 @@ test('waiting filter excludes completed work',()=>{
  expect(taskMatches(task,'waiting',Date.now())).toBe(true)
  expect(taskMatches({...task,status:'done'},'waiting',Date.now())).toBe(false)
 })
+
+test('shows a cloud permission action and asks before sending selected email to ChatGPT',async()=>{
+ const dom=new JSDOM('<div id="root"></div>')
+ vi.stubGlobal('window',dom.window);vi.stubGlobal('document',dom.window.document);vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true)
+ const snapshot={conversationId:'mail-cloud',text:'Please review the invoice today.',messages:[]}
+ const allowBackgroundCloud=vi.fn(async()=>true)
+ const run=vi.fn(async()=>({actions:[]}))
+ Object.assign(dom.window,{lingua:{hasVisibleChatReadAuthorization:async()=>true,readVisibleChat:async()=>snapshot,listTasks:async()=>[],allowBackgroundCloud,runAi:run,cancelAi:async()=>true,onVisibleChatChanged:()=>()=>{}}})
+ const root=createRoot(dom.window.document.querySelector('#root')!)
+ try {
+  await act(async()=>root.render(createElement(TaskSuggestions,{service:'outlook',model:'chatgpt:gpt-6-luna'})))
+  const permission=[...dom.window.document.querySelectorAll('button')].find(button=>button.textContent==='Cho phép xử lý cloud')!
+  await act(async()=>permission.click())
+  expect(allowBackgroundCloud).toHaveBeenCalledTimes(1)
+  expect(dom.window.document.body.textContent).toContain('Đã cho phép cloud trong phiên này')
+  const suggest=[...dom.window.document.querySelectorAll('button')].find(button=>button.textContent?.includes('Gợi ý công việc'))!
+  await act(async()=>suggest.click())
+  expect(allowBackgroundCloud).toHaveBeenCalledTimes(2)
+  expect(run).toHaveBeenCalledWith('summary',snapshot.text,'chatgpt:gpt-6-luna',expect.any(String))
+ }finally{await act(async()=>root.unmount());dom.window.close();vi.unstubAllGlobals()}
+})

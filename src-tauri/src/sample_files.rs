@@ -5,6 +5,7 @@
 use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -12,6 +13,8 @@ const MAX_ROOTS: usize = 12;
 const MAX_SCANNED_PER_SAMPLE_FOLDER: usize = 10_000;
 const MAX_RESULTS: usize = 1_000;
 const MAX_SAMPLE_FOLDER_DEPTH: usize = 8;
+const MAX_INSPECT_BYTES: u64 = 24 * 1024;
+const MAX_PREVIEW_CHARS: usize = 5_000;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +43,20 @@ pub struct SampleSearchResult {
 pub struct SampleFolder {
     pub root: String,
     pub path: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SampleFileInspection {
+    pub path: String,
+    pub name: String,
+    pub extension: String,
+    pub size: u64,
+    pub modified_at: Option<u64>,
+    pub is_text: bool,
+    pub line_count: usize,
+    pub preview: String,
+    pub truncated: bool,
 }
 
 /// Convert Windows' extended-length paths into paths suitable for storage and display. These are
@@ -93,6 +110,137 @@ fn valid_sample_id(value: &str) -> bool {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
         && !value.contains("..")
+}
+
+pub fn inspect_file(path: &str, allowed_roots: &[String]) -> anyhow::Result<SampleFileInspection> {
+    let validated = crate::local_open::validate(path)?;
+    let sym = fs::symlink_metadata(&validated)
+        .map_err(|_| anyhow::anyhow!("Không tìm thấy tệp hoặc chưa có quyền truy cập"))?;
+    anyhow::ensure!(
+        !sym.file_type().is_symlink() && sym.is_file(),
+        "Chỉ hỗ trợ đọc tệp thông thường (không hỗ trợ symlink hoặc thư mục)"
+    );
+    let canonical = validated
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("Không xác thực được đường dẫn tệp"))?;
+    let normalized_file = normalize_windows_path(canonical.to_string_lossy().as_ref())?;
+    let file_lower = normalized_file.to_lowercase();
+    let in_allowed_root = allowed_roots.iter().any(|root| {
+        validate_root(root)
+            .ok()
+            .map(|r| {
+                let mut prefix = r.to_string_lossy().to_lowercase();
+                if !prefix.ends_with('\\') && !prefix.ends_with('/') {
+                    prefix.push('\\');
+                }
+                file_lower.starts_with(&prefix)
+            })
+            .unwrap_or(false)
+    });
+    anyhow::ensure!(
+        in_allowed_root,
+        "Tệp nằm ngoài danh sách thư mục gốc Sample ID đã cấu hình trong Cài đặt."
+    );
+    let size = sym.len();
+    let modified_at = sym
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+    let name = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| normalized_file.clone());
+    let extension = canonical
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    let mut buffer = Vec::new();
+    let file = fs::File::open(&canonical)?;
+    file.take(MAX_INSPECT_BYTES).read_to_end(&mut buffer)?;
+    let byte_truncated = size > MAX_INSPECT_BYTES;
+
+    let text_ext = matches!(
+        extension.as_str(),
+        "txt" | "csv" | "tsv" | "json" | "xml" | "md" | "log" | "html" | "htm" | "ini" | "yaml" | "yml"
+    );
+    let decoded = if buffer.starts_with(&[0xFF, 0xFE]) && buffer.len() >= 2 {
+        let units: Vec<u16> = buffer[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        Some(String::from_utf16_lossy(&units))
+    } else if text_ext || (!buffer.contains(&0) && std::str::from_utf8(&buffer).is_ok()) {
+        Some(String::from_utf8_lossy(&buffer).into_owned())
+    } else {
+        None
+    };
+
+    if let Some(raw_text) = decoded {
+        let cleaned = raw_text.replace('\0', "");
+        let line_count = cleaned.lines().count();
+        let char_count = cleaned.chars().count();
+        let truncated = byte_truncated || char_count > MAX_PREVIEW_CHARS;
+        let preview: String = cleaned.chars().take(MAX_PREVIEW_CHARS).collect();
+        return Ok(SampleFileInspection {
+            path: normalized_file,
+            name,
+            extension,
+            size,
+            modified_at,
+            is_text: true,
+            line_count,
+            preview,
+            truncated,
+        });
+    }
+
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for &byte in &buffer {
+        if (0x20..=0x7E).contains(&byte) {
+            current.push(byte as char);
+        } else {
+            if current.len() >= 4
+                && current.chars().any(|c| c.is_ascii_alphanumeric())
+                && !current.starts_with("<?xml")
+                && !current.contains("schemas.openxmlformats")
+            {
+                tokens.push(current.trim().to_owned());
+            }
+            current.clear();
+        }
+        if tokens.len() >= 60 {
+            break;
+        }
+    }
+    let extracted = if tokens.is_empty() {
+        format!(
+            "[Tệp định dạng .{} · Dung lượng {} byte · Sử dụng nút Mở để xem trực tiếp trong ứng dụng Windows]",
+            if extension.is_empty() { "bin" } else { &extension },
+            size
+        )
+    } else {
+        format!(
+            "[Tệp định dạng .{} · Dung lượng {} byte]\nChuỗi ký tự nhận diện trong tệp:\n{}",
+            if extension.is_empty() { "bin" } else { &extension },
+            size,
+            tokens.join(" · ")
+        )
+    };
+    let preview: String = extracted.chars().take(MAX_PREVIEW_CHARS).collect();
+    Ok(SampleFileInspection {
+        path: normalized_file,
+        name,
+        extension,
+        size,
+        modified_at,
+        is_text: false,
+        line_count: tokens.len(),
+        preview,
+        truncated: byte_truncated,
+    })
 }
 
 pub fn search(
@@ -279,7 +427,7 @@ fn add_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{search, valid_sample_id};
+    use super::{inspect_file, search, valid_sample_id};
     use std::fs;
 
     #[test]
@@ -325,6 +473,29 @@ mod tests {
         assert!(result.files.iter().any(|file| file.name == "report.pdf"));
         let all = search("261106.037", &roots, Some("CT-LCT-VS"), true).unwrap();
         assert_eq!(all.files.len(), 3);
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn inspect_file_reads_text_inside_allowed_root_and_rejects_outside() {
+        let temp =
+            std::env::temp_dir().join(format!("linguahub-sample-inspect-{}", uuid::Uuid::new_v4()));
+        let root = temp.join("samples");
+        let outside = temp.join("outside");
+        fs::create_dir_all(root.join("V26-04169")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let inside_file = root.join("V26-04169").join("note.txt");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&inside_file, "Mã mẫu: V26-04169\nĐộ ẩm: 12.5%").unwrap();
+        fs::write(&outside_file, "Secret").unwrap();
+        let roots = [root.to_string_lossy().into_owned()];
+
+        let info = inspect_file(inside_file.to_string_lossy().as_ref(), &roots).unwrap();
+        assert!(info.is_text);
+        assert_eq!(info.line_count, 2);
+        assert!(info.preview.contains("12.5%"));
+
+        assert!(inspect_file(outside_file.to_string_lossy().as_ref(), &roots).is_err());
         let _ = fs::remove_dir_all(temp);
     }
 }

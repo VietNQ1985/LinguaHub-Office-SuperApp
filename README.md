@@ -1,4 +1,4 @@
-# LinguaHub Office SuperApp 0.4.1 (Tauri v2 / Rust)
+# LinguaHub Office SuperApp 0.4.2 (Tauri v2 / Rust)
 
 Bản Office độc lập, kế thừa nền Tauri 0.2.16 của LinguaHub-AI-Pro và bổ sung Office Dashboard cùng AI Memory có chọn lọc và Prompt Studio phiên bản hoá. Dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
 
