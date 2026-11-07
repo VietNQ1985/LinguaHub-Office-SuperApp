@@ -71,7 +71,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open, &whatsapp, &teams, &zalo, &separator, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("LinguaHub AI Pro")
+        .tooltip("LinguaHub Office SuperApp")
         .show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
@@ -137,7 +137,7 @@ pub fn run() {
             }
 
             let window = WindowBuilder::new(app, "main")
-                .title("LinguaHub AI Pro")
+                .title("LinguaHub Office SuperApp")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(1000.0, 600.0)
                 .visible(true)
@@ -195,6 +195,7 @@ pub fn run() {
             commands::window_tray,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
+            commands::workspace_sidebar_layout,
             commands::workspace_unread,
             commands::workspace_open,
             commands::web_tab_open,

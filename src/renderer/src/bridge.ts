@@ -65,6 +65,7 @@ window.lingua = {
   },
   reloadWorkspace: () => call('workspace_reload'),
   setWorkspacePanelLayout: (panelWidth, collapsed, persist = false) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist }).catch(() => {}) },
+  setWorkspaceSidebarLayout: collapsed => { void call('workspace_sidebar_layout', { collapsed }).catch(() => {}) },
   setMasking: (enabled: boolean) => call('privacy_masking', { enabled }),
   getDataRetentionDays: () => call('privacy_retention_get'),
   setDataRetentionDays: days => call('privacy_retention_set', { days }),

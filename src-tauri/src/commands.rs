@@ -90,6 +90,19 @@ pub fn workspace_panel_layout(
 }
 
 #[tauri::command]
+pub fn workspace_sidebar_layout(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    collapsed: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.lock().sidebar_width = if collapsed { 68.0 } else { 232.0 };
+    workspace::layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn workspace_unread(webview: Webview, state: State<AppState>) -> Res<Value> {
     trusted(&webview)?;
     Ok(json!(state.lock().unread.clone()))

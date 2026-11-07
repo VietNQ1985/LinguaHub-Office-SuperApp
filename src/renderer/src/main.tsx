@@ -5,13 +5,17 @@ import { SampleFilePanel } from './SampleFilePanel'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
+import './dashboard.css'
 import './bridge'
 import { DialogHost } from './DialogHost'
-import { AiPanel } from './AiPanel'
 import type {UnreadCounts} from '../../shared/workspace-unread'
-import {WorkspaceUnreadBadge} from './WorkspaceUnreadBadge'
 import { APP_ITEMS, AppsPanel, type AppId, type AppsSettings } from './AppsPanel'
 import { AppLogo } from './AppLogo'
+import { OfficeDashboard } from './OfficeDashboard'
+import { OfficeGlobalSearch, OfficeNotifications, OfficeSidebar, OFFICE_NAV_ITEMS, type OfficeArea } from './OfficeNavigation'
+import { ArrowLeft, Moon, PanelRightClose, PanelRightOpen, RefreshCw, Settings, Sun, Wifi, WifiOff } from 'lucide-react'
+
+const AiPanel = React.lazy(() => import('./AiPanel').then(module => ({ default: module.AiPanel })))
 
 type WorkspaceService = 'whatsapp' | 'telegram' | 'teams' | 'outlook' | 'zalo' | 'zoom' | 'meet'
 type UiService=WorkspaceService
@@ -21,6 +25,7 @@ declare global {
     lingua: {
       pickLocalPath(folder:boolean):Promise<string|null>
       setUiFormOpen(open:boolean):Promise<void>
+      setWorkspaceSidebarLayout(collapsed:boolean):void
       openLocalPath(path: string): Promise<boolean>
       getSampleSearchRoots(): Promise<string[]>
       addSampleSearchRoot(path: string): Promise<string[]>
@@ -108,6 +113,14 @@ declare global {
 }
 
 function App() {
+  const [activeArea, setActiveArea] = React.useState<OfficeArea>('dashboard')
+  const activeAreaRef = React.useRef<OfficeArea>(activeArea)
+  activeAreaRef.current = activeArea
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
+    try { return localStorage.getItem('linguahub.office.sidebar.v1') === 'collapsed' } catch { return false }
+  })
+  const [theme, setTheme] = React.useState<'light'|'dark'>('light')
+  const areaHistory = React.useRef<OfficeArea[]>([])
   const [workspaceForm,setWorkspaceForm]=React.useState<'tab'|'path'|null>(null)
   const [webTabs,setWebTabs]=React.useState<Array<{id:string;address:string;name:string;transient?:boolean}>>(()=>{
     try {const saved=JSON.parse(localStorage.getItem('linguahub.web-tabs.v1')||'[]');return Array.isArray(saved)?saved.filter(t=>typeof t.id==='string'&&/^web-[a-z0-9-]+$/.test(t.id)&&typeof t.name==='string'&&typeof t.address==='string'&&t.address.startsWith('https://')).slice(0,20):[]}catch{return []}
@@ -118,6 +131,7 @@ function App() {
   })
   const [erpOpen,setErpOpen]=React.useState(false)
   const [sampleFinderOpen,setSampleFinderOpen]=React.useState(false)
+  const [sampleReturnArea,setSampleReturnArea]=React.useState<OfficeArea>('projects')
   React.useEffect(()=>{try{if(webTabs.some(tab=>tab.id===activeWeb))localStorage.setItem('linguahub.erp-active-tab.v1',activeWeb);else localStorage.removeItem('linguahub.erp-active-tab.v1')}catch{}},[activeWeb,webTabs])
   const erpOpenRef=React.useRef(erpOpen)
   erpOpenRef.current=erpOpen
@@ -125,7 +139,7 @@ function App() {
   const pendingWebTitles=React.useRef(new Map<string,string>())
   const pendingWebAddresses=React.useRef(new Map<string,string>())
   React.useEffect(()=>{
-    const created=(event:Event)=>{const tab=(event as CustomEvent<{id:string;address:string;name:string}>).detail;knownWebTabs.current.add(tab.id);const title=pendingWebTitles.current.get(tab.id);const address=pendingWebAddresses.current.get(tab.id)||tab.address;pendingWebTitles.current.delete(tab.id);pendingWebAddresses.current.delete(tab.id);setWebTabs(t=>t.some(x=>x.id===tab.id)?t:[...t,{...tab,name:title||tab.name,address,transient:!address.startsWith('https://')}]);setActiveWeb(tab.id);setErpOpen(true);setTasksOpen(false);window.dispatchEvent(new Event('linguahub:workspace'));window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'erp'}))}
+    const created=(event:Event)=>{const tab=(event as CustomEvent<{id:string;address:string;name:string}>).detail;knownWebTabs.current.add(tab.id);const title=pendingWebTitles.current.get(tab.id);const address=pendingWebAddresses.current.get(tab.id)||tab.address;pendingWebTitles.current.delete(tab.id);pendingWebAddresses.current.delete(tab.id);setWebTabs(t=>t.some(x=>x.id===tab.id)?t:[...t,{...tab,name:title||tab.name,address,transient:!address.startsWith('https://')}]);setActiveWeb(tab.id);setActiveArea('projects');setErpOpen(true);setTasksOpen(false);window.dispatchEvent(new Event('linguahub:workspace'));window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'erp'}))}
     const updated=(event:Event)=>{const tab=(event as CustomEvent<{id:string;address:string;name:string}>).detail;if(!knownWebTabs.current.has(tab.id)&&tab.name){pendingWebTitles.current.set(tab.id,tab.name);if(pendingWebTitles.current.size>100)pendingWebTitles.current.delete(pendingWebTitles.current.keys().next().value!)}setWebTabs(t=>t.map(x=>x.id===tab.id?{...x,name:tab.name||x.name}:x))}
     const navigated=(event:Event)=>{const tab=(event as CustomEvent<{id:string;address:string}>).detail;if(!tab.address.startsWith('https://'))return;if(!knownWebTabs.current.has(tab.id)){pendingWebAddresses.current.set(tab.id,tab.address);if(pendingWebAddresses.current.size>100)pendingWebAddresses.current.delete(pendingWebAddresses.current.keys().next().value!)}setWebTabs(t=>t.map(x=>x.id===tab.id?{...x,address:tab.address,transient:false}:x))}
     window.addEventListener('linguahub:web-tab-created',created);window.addEventListener('linguahub:web-tab-updated',updated)
@@ -135,12 +149,12 @@ function App() {
   const openWeb=async(tab:{id:string;address:string;name:string})=>{
     setSampleFinderOpen(false)
     window.dispatchEvent(new Event('linguahub:workspace'))
-    try { await window.lingua.webTab(tab.id,tab.address); setActiveWeb(tab.id);setErpOpen(true);setTasksOpen(false);setFallbackService(null);window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'erp'}));return true }
+    try { await window.lingua.webTab(tab.id,tab.address); setActiveArea('projects');setActiveWeb(tab.id);setErpOpen(true);setTasksOpen(false);setFallbackService(null);window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'erp'}));return true }
     catch { setStatus('Không mở được tab web. Kiểm tra địa chỉ HTTPS.');return false }
   }
   const addWeb=()=>{
     if(webTabs.length>=20){setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.');return}
-    setErpOpen(true)
+    setActiveArea('projects');setErpOpen(true)
     setWorkspaceForm('tab')
     setPanelCollapsed(false)
   }
@@ -151,7 +165,6 @@ function App() {
     void window.lingua.getWorkspaceUnread().then(counts=>{if(alive&&!updated)setUnread(counts)}).catch(()=>{})
     return()=>{alive=false;stop()}
   },[])
-  const badge=(service:'whatsapp'|'teams'|'zalo')=><WorkspaceUnreadBadge value={unread[service]}/>
   const [tasksOpen,setTasksOpen]=React.useState(false)
   const [taskSource,setTaskSource]=React.useState<TaskSourceSnapshot|null>(null)
   const [taskModel,setTaskModel]=React.useState('')
@@ -178,10 +191,16 @@ function App() {
   React.useEffect(() => {
     void window.lingua.getPreferences().then(preferences => {
       setPanelWidth(preferences.panelWidth)
+      setTheme(preferences.theme === 'dark' ? 'dark' : 'light')
       document.documentElement.dataset.theme = preferences.theme
       document.documentElement.lang = 'vi'
     }).catch(() => {})
   }, [])
+
+  React.useEffect(() => {
+    try { localStorage.setItem('linguahub.office.sidebar.v1', sidebarCollapsed ? 'collapsed' : 'expanded') } catch { /* The current view remains usable if storage is unavailable. */ }
+    window.lingua.setWorkspaceSidebarLayout(sidebarCollapsed)
+  }, [sidebarCollapsed])
 
   const updatePanelWidth = (clientX: number, persist: boolean) => {
     const max = Math.min(560, window.innerWidth - 520)
@@ -194,8 +213,9 @@ function App() {
     window.lingua.setWorkspacePanelLayout(panelWidth, panelCollapsed, false)
   }, [panelWidth, panelCollapsed])
 
-  const open = React.useCallback(async (service: WorkspaceService) => {
+  const open = React.useCallback(async (service: WorkspaceService, targetArea?: OfficeArea) => {
     const current=++operation.current
+    setActiveArea(targetArea || (service === 'outlook' ? 'email' : 'messages'))
     setTasksOpen(false)
     setSampleFinderOpen(false)
     setErpOpen(false)
@@ -220,8 +240,9 @@ function App() {
   // First run: nothing is loaded until the user picks apps (AppsPanel firstRun in the workspace area).
   const [apps, setApps] = React.useState<AppId[] | null>(null)
   const [needsSetup, setNeedsSetup] = React.useState(false)
-  const openApp = React.useCallback((app: AppId) => open(app), [open])
+  const openApp = React.useCallback((app: AppId) => open(app, activeArea === 'meetings' ? 'meetings' : undefined), [open, activeArea])
   const openErp=React.useCallback(async()=>{
+    setActiveArea('projects')
     setSampleFinderOpen(false)
     setTasksOpen(false)
     const savedId=(()=>{try{return localStorage.getItem('linguahub.erp-active-tab.v1')||''}catch{return ''}})()
@@ -232,6 +253,7 @@ function App() {
     if(await openWeb(initial)){knownWebTabs.current.add(initial.id);setWebTabs(values=>values.some(value=>value.id===initial.id)?values:[...values,initial])}
   },[activeWeb,openWeb,webTabs])
   const showEmptyErp=()=>{
+    setActiveArea('projects')
     setSampleFinderOpen(false)
     setActiveWeb('');setErpOpen(true);setTasksOpen(false);setFallbackService(null)
     window.dispatchEvent(new Event('linguahub:workspace'))
@@ -251,12 +273,20 @@ function App() {
     }catch{setStatus('Không đóng được tab. Anh thử lại.')}
   }
   const openSampleFinder=async()=>{
-    setErpOpen(true);setTasksOpen(false);setSampleFinderOpen(true)
+    setActiveArea('projects');setSampleReturnArea('projects');setErpOpen(true);setTasksOpen(false);setSampleFinderOpen(true)
     window.dispatchEvent(new Event('linguahub:workspace'))
     try { await window.lingua.setTasksWorkspace(true) } catch { setStatus('Chưa mở được tiện ích Sample ID.') }
   }
   const closeSampleFinder=()=>{
     setSampleFinderOpen(false)
+    if(sampleReturnArea==='documents'){
+      setErpOpen(false)
+      void window.lingua.setTasksWorkspace(false).catch(()=>{})
+      void window.lingua.showDashboard().catch(()=>{})
+      window.dispatchEvent(new Event('linguahub:dashboard'))
+      window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'dashboard'}))
+      return
+    }
     const tab=webTabs.find(value=>value.id===activeWeb)
     if(tab)void openWeb(tab)
     else showEmptyErp()
@@ -269,12 +299,15 @@ function App() {
     let alive = true
     void window.lingua.getApps().then(settings => {
       if (!alive) return
-      if (!settings.reviewed) { setNeedsSetup(true); setApps([]); setStatus('Chọn ứng dụng để bắt đầu'); void window.lingua.showDashboard().catch(() => {}); return }
+      if (!settings.reviewed) { setNeedsSetup(true); setApps([]); setStatus('Chọn ứng dụng để bắt đầu'); void window.lingua.showDashboard().catch(() => {}); window.dispatchEvent(new Event('linguahub:dashboard')); window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'dashboard'})); return }
       setApps(settings.enabled)
-      openStartup(settings)
-    }).catch(() => { if (alive) { setApps(APP_ITEMS.map(item => item.id)); void open('whatsapp') } })
+      setActiveArea('dashboard')
+      void window.lingua.showDashboard().catch(() => {})
+      window.dispatchEvent(new Event('linguahub:dashboard'))
+      window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'dashboard'}))
+    }).catch(() => { if (alive) { setApps(APP_ITEMS.map(item => item.id)); setStatus('Chưa tải được cài đặt ứng dụng. Dashboard vẫn dùng được.') } })
     return () => { alive = false }
-  }, [open, openStartup])
+  }, [open])
   const activeRef = React.useRef(activeService)
   const needsSetupRef = React.useRef(needsSetup)
   needsSetupRef.current = needsSetup
@@ -289,8 +322,6 @@ function App() {
     window.addEventListener('linguahub:apps', changed)
     return () => window.removeEventListener('linguahub:apps', changed)
   }, [openApp, openStartup])
-  const shown = (app: AppId) => !apps || apps.includes(app)
-
   const reload = React.useCallback(async () => {
     if(needsSetup)return
     window.dispatchEvent(new Event('linguahub:workspace'))
@@ -307,11 +338,13 @@ function App() {
 
   React.useEffect(() => window.lingua.onShortcut(action => {
     if ((action === 'whatsapp' || action === 'teams' || action==='zalo' || action==='zoom' || action==='meet') && (!apps || apps.includes(action))) void open(action)
-    else if (action === 'dashboard' && apps?.length) void openApp(apps[0])
+    else if (action === 'dashboard') { areaHistory.current.push(activeAreaRef.current); setActiveArea('dashboard'); setTasksOpen(false); setErpOpen(false); setSampleFinderOpen(false); void window.lingua.setTasksWorkspace(false).catch(()=>{}); void window.lingua.showDashboard().catch(()=>{}); window.dispatchEvent(new Event('linguahub:dashboard')); window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'dashboard'})) }
     else if (action === 'reload') void reload()
   }), [open, openApp, reload, apps])
 
-  const openTasks=React.useCallback(async()=>{
+  const openTasks=React.useCallback(async(recordHistory=true)=>{
+    if(recordHistory&&activeAreaRef.current!=='tasks')areaHistory.current.push(activeAreaRef.current)
+    setActiveArea('tasks')
     setSampleFinderOpen(false)
     const version=++operation.current
     try {
@@ -343,51 +376,156 @@ function App() {
     }
   }
 
-  return <div className="app" lang="vi">
-    {workspaceForm&&<WorkspaceForm kind={workspaceForm} panelWidth={panelWidth} onClose={()=>setWorkspaceForm(null)} onSubmit={async value=>{
-      if(workspaceForm==='path'){const opened=await window.lingua.openLocalPath(value.address);setStatus(opened?'Đã mở trên Windows':'Đã hủy mở đường dẫn')}
-      else{const url=new URL(value.address);const tab={id:'web-'+crypto.randomUUID(),address:url.href,name:value.name||url.hostname};if(!await openWeb(tab))throw new Error('Không mở được trang trong tab. Anh kiểm tra địa chỉ và thử lại.');knownWebTabs.current.add(tab.id);setWebTabs(t=>[...t,tab])}
-    }}/>}
-    <header className="topbar">
-      <div className="topbar-brand"><span className="brand-mark">VI</span><span>LinguaHub <small>AI</small></span></div>
-      <nav className="workspace-tabs" aria-label="Chọn không gian làm việc">
-        {APP_ITEMS.filter(item => shown(item.id)).map(item => <button key={item.id} type="button" className={!tasksOpen && !erpOpen && activeService === item.id ? 'workspace-tab active' : 'workspace-tab'} aria-current={!tasksOpen && !erpOpen && activeService === item.id ? 'page' : undefined} onClick={() => void openApp(item.id)}><AppLogo app={item.id} size={22} />{item.label}{item.id === 'whatsapp' || item.id === 'teams' || item.id === 'zalo' ? badge(item.id) : null}</button>)}
-        <button type="button" className={!tasksOpen&&erpOpen?'workspace-tab active':'workspace-tab'} aria-current={!tasksOpen&&erpOpen?'page':undefined} onClick={()=>void openErp()}>ERP</button>
-        <button type="button" className={tasksOpen?'workspace-tab active':'workspace-tab'} aria-current={tasksOpen?'page':undefined} onClick={()=>void openTasks()}>☑ Công việc</button>
-      </nav>
-      <div className="topbar-actions">
-        <button type="button" className="icon-button" title="Mở file, thư mục hoặc chương trình trên Windows" onClick={()=>{setPanelCollapsed(false);setWorkspaceForm('path')}}>📂</button>
-        <button type="button" className="icon-button" title="Thu gọn xuống khay hệ thống" aria-label="Thu gọn xuống khay hệ thống" onClick={()=>void window.lingua.hideToTray().catch(()=>setStatus('Chưa thu gọn được xuống khay hệ thống.'))}>▁</button>
-        <span className={online ? 'connection-status' : 'connection-status offline'} title={status}>{online ? status : 'Máy đang ngoại tuyến'}</span>
-        <button type="button" className="icon-button" title="Tải lại trang trò chuyện" aria-label="Tải lại trang" onClick={() => void reload()}>↻</button>
-        <button type="button" className="icon-button" title="Cài đặt" aria-label="Cài đặt" onClick={() => { if (panelCollapsed) setPanelCollapsed(false); window.dispatchEvent(new Event('linguahub:settings')) }}>⚙</button>
-        <button type="button" className="icon-button" title={panelCollapsed ? 'Mở bản dịch' : 'Thu gọn bản dịch'} aria-label={panelCollapsed ? 'Mở bản dịch' : 'Thu gọn bản dịch'} onClick={() => setPanelCollapsed(value => !value)}>{panelCollapsed ? '▤' : '◧'}</button>
-      </div>
-    </header>
-    {erpOpen&&!tasksOpen&&<nav className="erp-subtabs" aria-label="Các tab trong ERP">
-      {webTabs.map((tab,index)=><div className={activeWeb===tab.id?'erp-subtab active':'erp-subtab'} key={tab.id}>
-        <button type="button" className="erp-subtab-select" aria-current={activeWeb===tab.id?'page':undefined} onClick={()=>void openWeb(tab)} title={tab.address}>{tab.name}</button>
-        <button type="button" className="erp-subtab-close" aria-label={`Đóng ${tab.name}`} title={`Đóng ${tab.name}`} onClick={()=>void closeWeb(tab,index)}>×</button>
-      </div>)}
-      <button type="button" className="erp-add-tab" onClick={addWeb} disabled={webTabs.length>=20} title={webTabs.length>=20?'Đã đạt giới hạn 20 tab':'Mở thêm một tab ERP'}>＋ <span>Tab mới</span></button>
-      {!webTabs.length&&!sampleFinderOpen&&<span className="erp-subtabs-hint">Mở Arito hoặc thêm một địa chỉ web ERP.</span>}
-      <button type="button" className={sampleFinderOpen?'erp-subtab-tool active':'erp-subtab-tool'} aria-current={sampleFinderOpen?'page':undefined} onClick={()=>void openSampleFinder()}>⌕ Tra Sample ID</button>
-    </nav>}
-    <div className="workspace-row">
-      <main className={tasksOpen?"workspace tasks-workspace":"workspace"} aria-label={tasksOpen?"Công việc":erpOpen?"Trang ERP":"Trang trò chuyện"}>
-        {tasksOpen&&<WorkTasks service={erpOpen?(webTabs.find(tab=>tab.id===activeWeb)?.name||'ERP'):activeService} model={taskModel} sourceSnapshot={taskSource} onBack={()=>{const tab=webTabs.find(value=>value.id===activeWeb);if(erpOpen){if(tab)void openWeb(tab);else showEmptyErp()}else void openApp(activeService)}}/>}
-        {!tasksOpen&&<>
-        {sampleFinderOpen?<SampleFileFinder onClose={closeSampleFinder}/>:erpOpen&&!webTabs.some(tab=>tab.id===activeWeb)?<div className="erp-empty-state"><div><span aria-hidden="true">▣</span><h2>Không gian ERP</h2><p>Mở Arito hoặc thêm các màn hình ERP cần dùng. Mỗi màn hình có tab riêng và phiên đăng nhập được giữ trên máy.</p><div><button type="button" className="primary-button" onClick={()=>void openErp()}>Mở Arito</button><button type="button" className="secondary-button" onClick={addWeb}>Thêm địa chỉ ERP</button></div></div></div>
-          :needsSetup ? <AppsPanel firstRun /> : fallbackService ? <div className="workspace-fallback"><h2>Chưa mở được trang trò chuyện</h2><p>Trang này có thể không hỗ trợ chạy bên trong ứng dụng. Anh có thể mở bằng trình duyệt.</p><button onClick={() => void openFallback()}>Mở bằng trình duyệt</button></div> : <div className="workspace-placeholder">Đang mở trang trò chuyện…</div>}
-        </>}
-      </main>
-      {!tasksOpen && !panelCollapsed && <div className="panel-resizer" role="separator" aria-label="Kéo để điều chỉnh độ rộng bản dịch" aria-orientation="vertical" onPointerDown={event => { resizing.current = true; event.currentTarget.setPointerCapture(event.pointerId) }} onPointerMove={event => { if (resizing.current) updatePanelWidth(event.clientX, false) }} onPointerUp={event => { if (resizing.current) { resizing.current = false; updatePanelWidth(event.clientX, true) } }} onLostPointerCapture={() => { resizing.current = false }} />}
-      <aside hidden={tasksOpen} className={panelCollapsed ? 'panel panel-collapsed' : 'panel'} style={{width: panelCollapsed ? 56 : panelWidth}} aria-label={erpOpen?'Tra cứu tệp theo Sample ID':'Trợ lý dịch tiếng Việt'}>
-        {panelCollapsed && <button className="expand-panel" title="Mở bản dịch" aria-label="Mở bản dịch" onClick={() => setPanelCollapsed(false)}>›</button>}
-        <div className={panelCollapsed ? 'panel-body panel-body-hidden' : 'panel-body'} aria-hidden={panelCollapsed}>
-          {erpOpen?<SampleFilePanel/>:<AiPanel workspaceActive={!tasksOpen} />}
+  const showOfficePage = async (area:OfficeArea) => {
+    setActiveArea(area)
+    setTasksOpen(false)
+    setErpOpen(false)
+    setSampleFinderOpen(false)
+    setFallbackService(null)
+    setStatus('Sẵn sàng')
+    try { await window.lingua.setTasksWorkspace(false) } catch { /* The page itself can still be shown. */ }
+    try { await window.lingua.showDashboard() } catch { /* Native workspace chrome is optional in browser previews. */ }
+    window.dispatchEvent(new Event('linguahub:dashboard'))
+    window.dispatchEvent(new CustomEvent('linguahub:service',{detail:'dashboard'}))
+  }
+
+  const openDocumentsSampleFinder = async () => {
+    if(activeAreaRef.current!=='documents')areaHistory.current.push(activeAreaRef.current)
+    setActiveArea('documents')
+    setSampleReturnArea('documents')
+    setErpOpen(true)
+    setTasksOpen(false)
+    setSampleFinderOpen(true)
+    setFallbackService(null)
+    window.dispatchEvent(new Event('linguahub:workspace'))
+    try { await window.lingua.setTasksWorkspace(true) } catch { setStatus('Chưa mở được tra cứu tệp. Anh thử lại.') }
+  }
+
+  const navigateArea = async (area:OfficeArea, recordHistory=true) => {
+    if(recordHistory&&area!==activeAreaRef.current)areaHistory.current.push(activeAreaRef.current)
+    if(area==='tasks'){await openTasks(false);return}
+    if(area==='projects'){await openErp();return}
+    if(area==='messages'){
+      const current=activeService!=='outlook'&&apps?.includes(activeService)?activeService:apps?.find(value=>value!=='outlook')
+      if(current){await open(current,'messages');return}
+      await showOfficePage(area)
+      setStatus(apps===null?'Đang tải danh sách ứng dụng…':'Chưa bật ứng dụng nhắn tin. Mở Quản lý ứng dụng để chọn.')
+      return
+    }
+    if(area==='email'){
+      if(apps?.includes('outlook')){await open('outlook','email');return}
+      await showOfficePage(area)
+      setStatus(apps===null?'Đang tải danh sách ứng dụng…':'Outlook chưa được bật trong workspace này.')
+      return
+    }
+    await showOfficePage(area)
+  }
+
+  const goBack = () => {
+    const previous=areaHistory.current.pop()||'dashboard'
+    void navigateArea(previous,false)
+  }
+
+  const openWorkspaceManagement = () => {
+    if(panelCollapsed)setPanelCollapsed(false)
+    window.dispatchEvent(new Event('linguahub:settings'))
+  }
+
+  const toggleTheme = async () => {
+    const next=theme==='dark'?'light':'dark'
+    setTheme(next)
+    document.documentElement.dataset.theme=next
+    try {
+      const preferences=await window.lingua.getPreferences()
+      await window.lingua.setPreferences({theme:next,model:preferences.model,replyModel:preferences.replyModel})
+    } catch { setStatus('Chưa lưu được chế độ màu.') }
+  }
+
+  const openMeetingApp = (service:'teams'|'zoom'|'meet') => {
+    if(!apps?.includes(service)){
+      setStatus(`${service==='teams'?'Microsoft Teams':service==='zoom'?'Zoom':'Google Meet'} chưa được bật. Mở Quản lý ứng dụng để chọn.`)
+      return
+    }
+    void open(service,'meetings')
+  }
+
+  const pageTitle=OFFICE_NAV_ITEMS.find(item=>item.id===activeArea)?.label||'Tổng quan'
+
+  return <div className="office-app" lang="vi">
+    <OfficeSidebar active={activeArea} collapsed={sidebarCollapsed} onNavigate={area=>void navigateArea(area)} onToggle={()=>setSidebarCollapsed(value=>!value)} onManageWorkspaces={openWorkspaceManagement}/>
+    <div className="office-main">
+      {workspaceForm&&<WorkspaceForm kind={workspaceForm} panelWidth={panelWidth} onClose={()=>setWorkspaceForm(null)} onSubmit={async value=>{
+        if(workspaceForm==='path'){const opened=await window.lingua.openLocalPath(value.address);setStatus(opened?'Đã mở trên Windows':'Đã hủy mở đường dẫn')}
+        else{const url=new URL(value.address);const tab={id:'web-'+crypto.randomUUID(),address:url.href,name:value.name||url.hostname};if(!await openWeb(tab))throw new Error('Không mở được trang trong tab. Anh kiểm tra địa chỉ và thử lại.');knownWebTabs.current.add(tab.id);setWebTabs(t=>[...t,tab])}
+      }}/>}
+      <header className="office-topbar">
+        <button type="button" className="office-back-button" aria-label="Quay lại" title="Quay lại khu vực trước" onClick={goBack}><ArrowLeft size={18} aria-hidden="true" /></button>
+        <div className="office-page-heading"><span>LinguaHub Office</span><h1>{pageTitle}</h1></div>
+        <OfficeGlobalSearch onNavigate={area=>void navigateArea(area)}/>
+        <div className="office-topbar-actions">
+          <OfficeNotifications counts={unread} onOpen={service=>void open(service,'messages')}/>
+          <span className={online?'office-network-status':'office-network-status offline'} title={status}>{online?<Wifi size={16} aria-hidden="true" />:<WifiOff size={16} aria-hidden="true" />}<span>{online?status:'Ngoại tuyến'}</span></span>
+          <button type="button" className="office-icon-button" title={theme==='dark'?'Chuyển sang giao diện sáng':'Chuyển sang giao diện tối'} aria-label={theme==='dark'?'Chuyển sang giao diện sáng':'Chuyển sang giao diện tối'} onClick={()=>void toggleTheme()}>{theme==='dark'?<Sun size={18} aria-hidden="true" />:<Moon size={18} aria-hidden="true" />}</button>
+          <button type="button" className="office-icon-button" title="Cài đặt" aria-label="Cài đặt" onClick={openWorkspaceManagement}><Settings size={18} aria-hidden="true" /></button>
+          <button type="button" className="office-icon-button" title="Thu gọn xuống khay hệ thống" aria-label="Thu gọn xuống khay hệ thống" onClick={()=>void window.lingua.hideToTray().catch(()=>setStatus('Chưa thu gọn được xuống khay hệ thống.'))}>▁</button>
+          <button type="button" className="office-icon-button" title="Tải lại workspace" aria-label="Tải lại workspace" disabled={!['messages','email','meetings','projects'].includes(activeArea)||needsSetup} onClick={()=>void reload()}><RefreshCw size={17} aria-hidden="true" /></button>
+          <button type="button" className="office-icon-button" title={panelCollapsed?'Mở trợ lý AI':'Thu gọn trợ lý AI'} aria-label={panelCollapsed?'Mở trợ lý AI':'Thu gọn trợ lý AI'} onClick={()=>setPanelCollapsed(value=>!value)}>{panelCollapsed?<PanelRightOpen size={18} aria-hidden="true" />:<PanelRightClose size={18} aria-hidden="true" />}</button>
         </div>
-      </aside>
+      </header>
+
+      {activeArea==='projects'&&erpOpen&&!tasksOpen&&<nav className="erp-subtabs" aria-label="Các tab trong ERP">
+        {webTabs.map((tab,index)=><div className={activeWeb===tab.id?'erp-subtab active':'erp-subtab'} key={tab.id}>
+          <button type="button" className="erp-subtab-select" aria-current={activeWeb===tab.id?'page':undefined} onClick={()=>void openWeb(tab)} title={tab.address}>{tab.name}</button>
+          <button type="button" className="erp-subtab-close" aria-label={`Đóng ${tab.name}`} title={`Đóng ${tab.name}`} onClick={()=>void closeWeb(tab,index)}>×</button>
+        </div>)}
+        <button type="button" className="erp-add-tab" onClick={addWeb} disabled={webTabs.length>=20} title={webTabs.length>=20?'Đã đạt giới hạn 20 tab':'Mở thêm một tab ERP'}>＋ <span>Tab mới</span></button>
+        {!webTabs.length&&!sampleFinderOpen&&<span className="erp-subtabs-hint">Mở Arito hoặc thêm một địa chỉ web ERP.</span>}
+        <button type="button" className={sampleFinderOpen?'erp-subtab-tool active':'erp-subtab-tool'} aria-current={sampleFinderOpen?'page':undefined} onClick={()=>void openSampleFinder()}>⌕ Tra Sample ID</button>
+      </nav>}
+
+      <div className="workspace-row">
+        <main className={tasksOpen?"workspace tasks-workspace":"workspace"} aria-label={tasksOpen?"Công việc":activeArea==='projects'?"Workspace ERP":activeArea==='documents'?"Tài liệu":pageTitle}>
+          {activeArea==='dashboard'&&<div className="office-dashboard-page">
+            {needsSetup&&<div className="office-onboarding"><AppsPanel firstRun /></div>}
+            <OfficeDashboard unread={unread} webTabs={webTabs} onNavigate={area=>void navigateArea(area)} onOpenTasks={()=>void navigateArea('tasks')} onOpenMessages={()=>void navigateArea('messages')} onOpenMeetings={()=>void navigateArea('meetings')} onOpenErp={()=>void navigateArea('projects')} onOpenWebTab={tab=>void openWeb(tab)} onConfigureAi={openWorkspaceManagement}/>
+          </div>}
+
+          {activeArea==='tasks'&&tasksOpen&&<WorkTasks service={erpOpen?(webTabs.find(tab=>tab.id===activeWeb)?.name||'ERP'):activeService} model={taskModel} sourceSnapshot={taskSource} onBack={goBack}/>}
+          {activeArea==='tasks'&&!tasksOpen&&<div className="workspace-placeholder">Đang mở danh sách công việc…</div>}
+
+          {activeArea==='projects'&&!sampleFinderOpen&&<>
+            {erpOpen&&!webTabs.some(tab=>tab.id===activeWeb)?<div className="erp-empty-state"><div><span aria-hidden="true">▣</span><h2>Không gian ERP</h2><p>Mỗi màn hình ERP có tab riêng và phiên đăng nhập được giữ trên máy này.</p><div><button type="button" className="primary-button" onClick={()=>void openErp()}>Mở Arito</button><button type="button" className="secondary-button" onClick={addWeb}>Thêm địa chỉ ERP</button></div></div></div>:!erpOpen?<div className="workspace-placeholder">Đang mở workspace ERP…</div>:<div className="workspace-placeholder">Đang mở workspace ERP…</div>}
+            {fallbackService&&<div className="workspace-fallback"><h2>Chưa mở được workspace</h2><p>Trang này có thể không hỗ trợ chạy bên trong ứng dụng. Anh có thể mở bằng trình duyệt.</p><button type="button" onClick={()=>void openFallback()}>Mở bằng trình duyệt</button></div>}
+          </>}
+          {activeArea==='projects'&&sampleFinderOpen&&<SampleFileFinder onClose={closeSampleFinder}/>}
+
+          {(activeArea==='messages'||activeArea==='email')&&!fallbackService&&<section className="office-launch-view" aria-labelledby="office-launch-title">
+            <span className="office-eyebrow">WORKSPACE ĐƯỢC GIỮ RIÊNG</span><h2 id="office-launch-title">{activeArea==='email'?'Outlook':'Tin nhắn'}</h2>
+            {apps===null?<p>Đang tải danh sách ứng dụng…</p>:needsSetup?<><p>Chọn ứng dụng và bật workspace trước khi mở. Phiên đăng nhập được giữ riêng cho từng ứng dụng.</p><button className="primary-button" type="button" onClick={openWorkspaceManagement}>Chọn ứng dụng</button></>:<div className="office-launch-grid">
+              {(activeArea==='email'?APP_ITEMS.filter(item=>item.id==='outlook'):APP_ITEMS.filter(item=>['whatsapp','telegram','teams','zalo'].includes(item.id))).map(item=><button key={item.id} type="button" disabled={!apps.includes(item.id)} onClick={()=>void open(item.id,activeArea)}><AppLogo app={item.id} size={27}/><span><strong>{item.label}</strong><small>{apps.includes(item.id)?item.hint:'Chưa bật trong workspace này'}</small></span>{apps.includes(item.id)&&<ArrowLeft className="office-launch-arrow" size={15} aria-hidden="true"/>}</button>)}
+              {!apps.some(app=>activeArea==='email'?app==='outlook':['whatsapp','telegram','teams','zalo'].includes(app))&&<p className="office-empty-state">Chưa bật ứng dụng {activeArea==='email'?'Outlook':'nhắn tin'}. <button className="text-button" type="button" onClick={openWorkspaceManagement}>Quản lý ứng dụng</button></p>}
+            </div>}
+          </section>}
+          {fallbackService&&['messages','email','meetings'].includes(activeArea)&&<div className="workspace-fallback"><h2>Chưa mở được trang trò chuyện</h2><p>Trang này có thể không hỗ trợ chạy bên trong ứng dụng. Anh có thể mở bằng trình duyệt.</p><button type="button" onClick={()=>void openFallback()}>Mở bằng trình duyệt</button></div>}
+
+          {activeArea==='meetings'&&<section className="office-feature-page" aria-labelledby="office-meetings-title"><span className="office-eyebrow">LỊCH & CUỘC HỌP</span><h2 id="office-meetings-title">Mở cuộc họp trong workspace riêng</h2><p>Teams, Zoom và Google Meet giữ nguyên phiên đăng nhập. Dịch phụ đề dùng quyền riêng đã thiết lập; ứng dụng chưa tự ghi âm cuộc họp.</p><div className="office-meeting-options">{(['teams','zoom','meet'] as const).map(service=>{const item=APP_ITEMS.find(app=>app.id===service)!;return <button key={service} type="button" disabled={!apps?.includes(service)} onClick={()=>openMeetingApp(service)}><AppLogo app={service} size={28}/><span><strong>{item.label}</strong><small>{apps?.includes(service)?'Mở workspace':needsSetup?'Chưa chọn ứng dụng':'Chưa bật trong workspace'}</small></span><ArrowLeft size={15} aria-hidden="true"/></button>})}</div></section>}
+
+          {activeArea==='documents'&&!sampleFinderOpen&&<section className="office-feature-page" aria-labelledby="office-documents-title"><span className="office-eyebrow">TÀI LIỆU TRÊN MÁY</span><h2 id="office-documents-title">Mở tệp do anh chọn</h2><p>LinguaHub chỉ mở đường dẫn được chọn trong Explorer; trang này chưa lập chỉ mục toàn bộ ổ đĩa hay đồng bộ tài liệu.</p><div className="office-feature-actions"><button type="button" className="primary-button" onClick={()=>{setPanelCollapsed(false);setWorkspaceForm('path')}}>Mở tệp hoặc thư mục trên Windows</button><button type="button" className="secondary-button" onClick={()=>void openDocumentsSampleFinder()}>Tra tệp theo Sample ID</button></div></section>}
+
+          {activeArea==='memory'&&<section className="office-feature-page office-future-page" aria-labelledby="office-memory-title"><span className="office-eyebrow">CHƯA BẬT · ISSUE #8</span><h2 id="office-memory-title">AI Memory Explorer</h2><p>Chưa có nguồn nào được chọn để lưu. Bản này không tự ghi lại chat, email, tài liệu hoặc hoạt động dự án. Chọn nguồn và tìm kiếm lịch sử sẽ được triển khai cùng AI Memory Engine.</p><div className="office-permission-note"><strong>Trạng thái quyền riêng tư</strong><span>Không có capture tự động đang chạy.</span></div></section>}
+
+          {activeArea==='translation'&&<section className="office-feature-page" aria-labelledby="office-translation-title"><span className="office-eyebrow">DỊCH THUẬT</span><h2 id="office-translation-title">Dịch tin nhắn, email và cuộc họp</h2><p>Mở một workspace để dịch nội dung đang hiển thị. Dịch phụ đề cuộc họp và gợi ý trả lời vẫn dùng các quyền riêng hiện có.</p><div className="office-feature-actions"><button type="button" className="primary-button" onClick={()=>setPanelCollapsed(false)}>Mở trợ lý theo ngữ cảnh</button><button type="button" className="secondary-button" onClick={()=>void navigateArea('messages')}>Mở tin nhắn</button><button type="button" className="secondary-button" onClick={()=>void navigateArea('email')}>Mở Outlook</button></div></section>}
+
+          {activeArea==='assistant'&&<section className="office-feature-page" aria-labelledby="office-assistant-title"><span className="office-eyebrow">TRỢ LÝ THEO NGỮ CẢNH</span><h2 id="office-assistant-title">AI hỗ trợ ngay cạnh workspace</h2><p>Dịch, tóm tắt cuộc trò chuyện được anh chọn đọc, tạo gợi ý phản hồi và dịch cuộc họp. AI Memory chưa kết nối, nên lịch sử dự án không được tra cứu.</p><div className="office-feature-actions"><button type="button" className="primary-button" onClick={()=>setPanelCollapsed(false)}>Mở trợ lý AI</button><button type="button" className="secondary-button" onClick={()=>void navigateArea('messages')}>Mở tin nhắn</button></div></section>}
+        </main>
+        {!tasksOpen && !(activeArea==='documents'&&sampleFinderOpen) && !panelCollapsed && <div className="panel-resizer" role="separator" aria-label="Kéo để điều chỉnh độ rộng trợ lý AI" aria-orientation="vertical" onPointerDown={event => { resizing.current = true; event.currentTarget.setPointerCapture(event.pointerId) }} onPointerMove={event => { if (resizing.current) updatePanelWidth(event.clientX, false) }} onPointerUp={event => { if (resizing.current) { resizing.current = false; updatePanelWidth(event.clientX, true) } }} onLostPointerCapture={() => { resizing.current = false }} />}
+        {!tasksOpen&&!(activeArea==='documents'&&sampleFinderOpen)&&<aside className={panelCollapsed ? 'panel panel-collapsed' : 'panel'} style={{width: panelCollapsed ? 56 : panelWidth}} aria-label={activeArea==='projects'&&erpOpen?'Tra cứu tệp theo Sample ID':'Trợ lý AI theo ngữ cảnh'}>
+          {panelCollapsed && <button className="expand-panel" title="Mở trợ lý AI" aria-label="Mở trợ lý AI" onClick={() => setPanelCollapsed(false)}>›</button>}
+          <div className={panelCollapsed ? 'panel-body panel-body-hidden' : 'panel-body'} aria-hidden={panelCollapsed}>
+            {activeArea==='projects'&&erpOpen?<SampleFilePanel/>:<React.Suspense fallback={<div className="assistant-loading" role="status">Đang mở trợ lý AI…</div>}><AiPanel workspaceActive={!tasksOpen} /></React.Suspense>}
+          </div>
+        </aside>}
+      </div>
     </div>
   </div>
 }

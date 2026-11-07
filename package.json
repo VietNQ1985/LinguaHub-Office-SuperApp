@@ -1,8 +1,8 @@
 {
   "name": "linguahub-office-superapp",
-  "version": "0.2.16",
+  "version": "0.3.0",
   "private": true,
-  "description": "LinguaHub Office SuperApp 0.2.16 on Tauri v2 (Rust + WebView2), with messaging, visible chat translation, reply suggestions, and English learning.",
+  "description": "LinguaHub Office SuperApp 0.3.0 on Tauri v2 with Office Dashboard, workspace navigation, messaging, contextual translation, and AI assistance.",
   "license": "MIT",
   "type": "module",
   "scripts": {

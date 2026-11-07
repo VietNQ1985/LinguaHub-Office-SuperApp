@@ -594,7 +594,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     };
     let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
     let state = app.state::<AppState>();
-    let (current, panel, divider, dialog_open, labels) = {
+    let (current, panel, divider, dialog_open, labels, sidebar_width) = {
         let inner = state.lock();
         let panel = if inner.panel_collapsed {
             56.0
@@ -608,6 +608,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             divider,
             inner.dialog_open > 0 || inner.ui_form_open,
             inner.views.clone(),
+            inner.sidebar_width,
         )
     };
     for label in labels {
@@ -620,9 +621,9 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             } else {
                 0.0
             };
-        let _ = webview.set_position(LogicalPosition::new(0.0, top));
+        let _ = webview.set_position(LogicalPosition::new(sidebar_width, top));
         let _ = webview.set_size(LogicalSize::new(
-            (width - panel - divider).max(300.0),
+            (width - sidebar_width - panel - divider).max(300.0),
             (height - top).max(100.0),
         ));
         let visible = label == view_label(&current) && !state.lock().tasks_open;
@@ -990,11 +991,12 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
     });
     let scale = window.scale_factor().unwrap_or(1.0);
     let size = window.inner_size()?;
+    let sidebar_width = state.lock().sidebar_width;
     let webview = window.add_child(
         builder,
-        LogicalPosition::new(0.0, HEADER),
+        LogicalPosition::new(sidebar_width, HEADER),
         LogicalSize::new(
-            (size.width as f64 / scale - 400.0).max(300.0),
+            (size.width as f64 / scale - sidebar_width - 400.0).max(300.0),
             (size.height as f64 / scale - HEADER).max(100.0),
         ),
     )?;

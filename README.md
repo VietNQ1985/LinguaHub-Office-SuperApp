@@ -1,6 +1,6 @@
-# LinguaHub Office SuperApp 0.2.16 (Tauri v2 / Rust)
+# LinguaHub Office SuperApp 0.3.0 (Tauri v2 / Rust)
 
-Bản Tauri độc lập của LinguaHub-AI-Pro 0.2.16, dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
+Bản Office độc lập, kế thừa nền Tauri 0.2.16 của LinguaHub-AI-Pro và bổ sung Office Dashboard. Dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
 
 ## Cài đặt và dữ liệu độc lập
 
@@ -8,9 +8,11 @@ Bản Tauri độc lập của LinguaHub-AI-Pro 0.2.16, dùng Rust + WebView2. H
 - Bundle identifier: `com.linguahub.office.superapp`.
 - Dữ liệu ứng dụng: `%APPDATA%\com.linguahub.office.superapp`.
 - Hồ sơ WebView2 và phiên đăng nhập: `%LOCALAPPDATA%\com.linguahub.office.superapp`.
-- Tauri updater chưa được cấu hình trong baseline 0.2.16; bản mới không nhận cập nhật từ kênh LinguaHub AI Pro.
+- Tauri updater chưa được cấu hình trong baseline 0.2.16; bản Office không nhận cập nhật từ kênh LinguaHub AI Pro.
 
 Identifier mới làm cho thư mục dữ liệu, cơ sở dữ liệu SQLite, cấu hình cửa sổ và hồ sơ WebView2 tách khỏi LinguaHub AI Pro 0.2.16. Hai ứng dụng có thể cài và chạy song song. Bản Office SuperApp không tự đọc hoặc nhập cơ sở dữ liệu từ bản Electron hay từ bản Tauri gốc.
+
+Copyright © 2026 Viet Nguyen Quoc. Giấy phép MIT; xem [LICENSE](LICENSE).
 
 ## Cần cài trước (Windows)
 

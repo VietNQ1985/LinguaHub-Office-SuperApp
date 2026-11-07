@@ -43,5 +43,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linguaHub-office-superapp-windows-installer
-          path: src-tauri/target/release/bundle/nsis/*0.2.16*x64-setup.exe
+          path: src-tauri/target/release/bundle/nsis/*0.3.0*x64-setup.exe
           if-no-files-found: error

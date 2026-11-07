@@ -17,7 +17,7 @@ pub fn show<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Result<()>
         let handle = app.clone();
         let target = service.to_owned();
         Toast::new(&app_id)
-            .title("LinguaHub AI Pro")
+            .title("LinguaHub Office SuperApp")
             .text1("Có thông báo mới.")
             .on_activated(move |_| {
                 let app = handle.clone();
