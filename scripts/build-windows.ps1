@@ -83,8 +83,14 @@ try {
     if (-not $installer) { throw "NSIS installer for version $appVersion was not found in $bundleDirectory" }
     if ($installer.Length -lt 2MB) { throw 'Installer is smaller than expected.' }
 
-    $installer | Select-Object FullName, Length
-    Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256
+    $artifactDirectory = Join-Path $repoRoot 'output\windows'
+    New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
+    $artifactPath = Join-Path $artifactDirectory $installer.Name
+    if (Test-Path -LiteralPath $artifactPath) { throw "Installer artifact already exists: $artifactPath" }
+    Copy-Item -LiteralPath $installer.FullName -Destination $artifactPath
+
+    Get-Item -LiteralPath $artifactPath | Select-Object FullName, Length
+    Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256
 }
 finally {
     Pop-Location
