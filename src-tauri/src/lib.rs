@@ -10,6 +10,8 @@ mod dialog;
 mod local_open;
 mod models;
 mod notify;
+mod office_memory;
+mod pdf_export;
 mod providers;
 mod sample_files;
 mod secrets;
@@ -17,6 +19,7 @@ mod state;
 mod stt;
 mod task_reminders;
 mod tray_badge;
+mod updater;
 mod urls;
 mod workspace;
 mod wv;
@@ -71,7 +74,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&open, &whatsapp, &teams, &zalo, &separator, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("LinguaHub AI Pro")
+        .tooltip("LinguaHub Office SuperApp")
         .show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
@@ -137,7 +140,7 @@ pub fn run() {
             }
 
             let window = WindowBuilder::new(app, "main")
-                .title("LinguaHub AI Pro")
+                .title("LinguaHub Office SuperApp")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(1000.0, 600.0)
                 .visible(true)
@@ -195,6 +198,8 @@ pub fn run() {
             commands::window_tray,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
+            commands::workspace_sidebar_layout,
+            commands::workspace_service_tabs_layout,
             commands::workspace_unread,
             commands::workspace_open,
             commands::web_tab_open,
@@ -207,6 +212,15 @@ pub fn run() {
             commands::sample_search_template,
             commands::sample_search_template_set,
             commands::sample_files_search,
+            commands::sample_file_inspect,
+            commands::pdf_export_settings,
+            commands::pdf_export_settings_set,
+            commands::pdf_export_list_source,
+            commands::pdf_export_convert,
+            commands::pdf_export_scan_erp_page,
+            commands::pdf_export_convert_erp_attachment,
+            commands::app_update_check,
+            commands::app_update_install,
             commands::workspace_dashboard,
             commands::workspace_external,
             commands::workspace_reload,
@@ -243,6 +257,25 @@ pub fn run() {
             commands::chat_read_visible,
             commands::chat_send_confirm,
             commands::chat_send_direct,
+            commands::memory_projects_list,
+            commands::memory_project_save,
+            commands::memory_project_delete,
+            commands::memory_capture_scopes_list,
+            commands::memory_capture_visible,
+            commands::memory_set_capture_enabled,
+            commands::memory_pause_all,
+            commands::memory_remove_capture_scope,
+            commands::memory_search,
+            commands::memory_get_source,
+            commands::memory_delete_source,
+            commands::memory_rebuild_index,
+            commands::memory_export_project,
+            commands::memory_prompts_list,
+            commands::memory_prompt_versions,
+            commands::memory_prompt_save,
+            commands::memory_prompt_activate,
+            commands::memory_prompt_delete,
+            commands::memory_prepare_prompt,
             commands::zalo_call_via_pc,
             commands::ai_models,
             commands::ai_run,

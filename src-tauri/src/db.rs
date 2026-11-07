@@ -363,6 +363,20 @@ impl Store {
         self.set("sampleSearch.templateFolder", path.unwrap_or_default())
     }
 
+    /// Settings for "Lưu PDF tự động" (source folder, output folder, rename template).
+    pub fn pdf_export_settings(&self) -> crate::pdf_export::PdfExportSettings {
+        self.get("pdfExport.settings")
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn set_pdf_export_settings(
+        &self,
+        settings: &crate::pdf_export::PdfExportSettings,
+    ) -> anyhow::Result<()> {
+        self.set("pdfExport.settings", &serde_json::to_string(settings)?)
+    }
+
     fn effort(&self, key: &str, default: &str) -> String {
         self.get(key)
             .filter(|value| REASONING_EFFORTS.contains(&value.as_str()))

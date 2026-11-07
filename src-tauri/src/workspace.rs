@@ -23,6 +23,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
 pub const HEADER: f64 = 64.0;
 /// The ERP child-tab strip rendered directly below the main navigation.
 pub const ERP_TABS_HEIGHT: f64 = 40.0;
+/// The message app switcher rendered below the office navigation.
+pub const SERVICE_SWITCHER_HEIGHT: f64 = 42.0;
 
 #[cfg(windows)]
 #[derive(Clone)]
@@ -153,7 +155,7 @@ fn prepare_popup_slot(
             .skip_taskbar(true)
             .additional_browser_args(BROWSER_ARGS)
             .on_navigation(move |url| {
-                let allowed = url.as_str() == "about:blank" || popup_target_allowed(url);
+                let allowed = url.as_str() == "about:blank" || url.scheme() == "blob" || popup_target_allowed(url);
                 if allowed
                     && navigation_state.claimed.load(Ordering::Acquire)
                     && popup_target_allowed(url)
@@ -465,7 +467,7 @@ pub fn open_web_tab(app: &AppHandle, id: &str, address: &str, close: bool) -> an
                     }
                     return false;
                 }
-                url.scheme() == "https" || url.as_str() == "about:blank"
+                url.scheme() == "https" || url.scheme() == "blob" || url.as_str() == "about:blank"
             });
         #[cfg(windows)]
         let builder = {
@@ -575,6 +577,34 @@ pub fn current_view<R: Runtime>(app: &AppHandle<R>) -> Option<(String, Webview<R
     view(app, &current).map(|webview| (current, webview))
 }
 
+/// Returns open ERP web tabs (`web-*`), with the currently active tab first.
+pub fn erp_views<R: Runtime>(app: &AppHandle<R>) -> Vec<(String, Webview<R>)> {
+    let (current, labels) = {
+        let state = app.state::<AppState>();
+        let inner = state.lock();
+        (
+            inner.current.clone(),
+            inner.views.iter().cloned().collect::<Vec<_>>(),
+        )
+    };
+    let mut result = Vec::new();
+    if current.starts_with("web-") {
+        if let Some(webview) = view(app, &current) {
+            result.push((current.clone(), webview));
+        }
+    }
+    for label in labels {
+        if let Some(id) = label.strip_prefix("svc-") {
+            if id.starts_with("web-") && id != current {
+                if let Some(webview) = app.get_webview(&label) {
+                    result.push((id.to_owned(), webview));
+                }
+            }
+        }
+    }
+    result
+}
+
 pub fn window_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.get_window("main")
         .map(|window| {
@@ -594,7 +624,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     };
     let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
     let state = app.state::<AppState>();
-    let (current, panel, divider, dialog_open, labels) = {
+    let (current, panel, divider, dialog_open, labels, sidebar_width, service_tabs_height) = {
         let inner = state.lock();
         let panel = if inner.panel_collapsed {
             56.0
@@ -608,21 +638,30 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             divider,
             inner.dialog_open > 0 || inner.ui_form_open,
             inner.views.clone(),
+            inner.sidebar_width,
+            inner.service_tabs_height,
         )
     };
     for label in labels {
         let Some(webview) = app.get_webview(&label) else {
             continue;
         };
+        let service_tabs_height =
+            if matches!(current.as_str(), "whatsapp" | "telegram" | "teams" | "zalo") {
+                service_tabs_height
+            } else {
+                0.0
+            };
         let top = HEADER
+            + service_tabs_height
             + if current.starts_with("web-") {
                 ERP_TABS_HEIGHT
             } else {
                 0.0
             };
-        let _ = webview.set_position(LogicalPosition::new(0.0, top));
+        let _ = webview.set_position(LogicalPosition::new(sidebar_width, top));
         let _ = webview.set_size(LogicalSize::new(
-            (width - panel - divider).max(300.0),
+            (width - sidebar_width - panel - divider).max(300.0),
             (height - top).max(100.0),
         ));
         let visible = label == view_label(&current) && !state.lock().tasks_open;
@@ -990,12 +1029,22 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
     });
     let scale = window.scale_factor().unwrap_or(1.0);
     let size = window.inner_size()?;
+    let (sidebar_width, service_tabs_height) = {
+        let inner = state.lock();
+        let service_tabs_height = if matches!(service, "whatsapp" | "telegram" | "teams" | "zalo") {
+            inner.service_tabs_height
+        } else {
+            0.0
+        };
+        (inner.sidebar_width, service_tabs_height)
+    };
+    let top = HEADER + service_tabs_height;
     let webview = window.add_child(
         builder,
-        LogicalPosition::new(0.0, HEADER),
+        LogicalPosition::new(sidebar_width, top),
         LogicalSize::new(
-            (size.width as f64 / scale - 400.0).max(300.0),
-            (size.height as f64 / scale - HEADER).max(100.0),
+            (size.width as f64 / scale - sidebar_width - 400.0).max(300.0),
+            (size.height as f64 / scale - top).max(100.0),
         ),
     )?;
     let _ = wv::install_permissions(&webview, service_permissions(app, service_owned.clone()));
@@ -1108,6 +1157,22 @@ pub fn start_polling<R: Runtime>(app: AppHandle<R>) {
                     if changed_at > previous && previous > 0.0
                         || (previous == 0.0 && changed_at > 0.0)
                     {
+                        if state.office_memory.has_enabled_provider(&service) {
+                            if let Ok(snapshot) = read_visible(&app).await {
+                                if let (Some(conversation_id), Some(messages)) = (
+                                    snapshot["conversationId"].as_str(),
+                                    snapshot["messages"].as_array(),
+                                ) {
+                                    let source_url = webview.url().ok().map(|url| url.to_string());
+                                    let _ = state.office_memory.ingest_observed_event(
+                                        &service,
+                                        conversation_id,
+                                        source_url.as_deref(),
+                                        messages,
+                                    );
+                                }
+                            }
+                        }
                         let _ = app.emit_to(
                             "ui",
                             "chat-visible-changed",

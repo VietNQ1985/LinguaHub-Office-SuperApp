@@ -17,10 +17,12 @@ export function TaskSuggestions({ service, model, active = true }: { service: Se
   const [searched, setSearched] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
+  const [cloudAllowed, setCloudAllowed] = useState(false)
   const [editing,setEditing]=useState<Suggestion|null>(null)
   const [existing,setExisting]=useState<WorkTask[]>([])
   const generation = useRef(0)
   const request = useRef<string | null>(null)
+  const cloudPermissionRequest = useRef<Promise<boolean> | null>(null)
   const lastSourceKey = useRef('')
   const analyzedSources = useRef(new Set<string>())
   const boundSource=useRef<{conversationId:string;text:string}|null>(null)
@@ -82,6 +84,17 @@ export function TaskSuggestions({ service, model, active = true }: { service: Se
     }
   }, [service, model, active])
 
+  const askForBackgroundCloud = async () => {
+    if (cloudPermissionRequest.current) return cloudPermissionRequest.current
+    const pending = window.lingua.allowBackgroundCloud()
+    cloudPermissionRequest.current = pending
+    try {
+      return await pending
+    } finally {
+      if (cloudPermissionRequest.current === pending) cloudPermissionRequest.current = null
+    }
+  }
+
   const suggest = async (automatic = false) => {
     if (busy || !model || !active) return
     const version = ++generation.current
@@ -112,9 +125,10 @@ export function TaskSuggestions({ service, model, active = true }: { service: Se
       }
 
       if (model.startsWith('chatgpt:')) {
-        const cloudAllowed = await window.lingua.allowBackgroundCloud()
+        const cloudAllowed = await askForBackgroundCloud()
         if (!valid()) return
         if (!cloudAllowed) throw new Error('Chưa cho phép ChatGPT xử lý nội dung này.')
+        setCloudAllowed(true)
       }
 
       // Re-read after permission dialogs so a stale conversation is never sent to the model.
@@ -183,6 +197,17 @@ export function TaskSuggestions({ service, model, active = true }: { service: Se
   }
 
   suggestRef.current = suggest
+
+  const requestCloudPermission = async () => {
+    try {
+      const allowed = await askForBackgroundCloud()
+      setCloudAllowed(allowed)
+      setMessage(allowed ? 'Đã cho phép xử lý cloud trong phiên này.' : 'Chưa cấp quyền cloud; nội dung chưa được gửi.')
+    } catch (failure) {
+      setMessage(failure instanceof Error ? failure.message : 'Chưa mở được yêu cầu cấp quyền cloud.')
+    }
+  }
+
   useEffect(() => {
     if (!active || !model) return
     let timer: ReturnType<typeof setTimeout>
@@ -230,7 +255,8 @@ export function TaskSuggestions({ service, model, active = true }: { service: Se
       <div><h3>Việc cần làm</h3><p>Gợi ý từ {serviceName(service)} đang mở</p></div>
       <button type="button" className="task-panel-manage" onClick={() => window.dispatchEvent(new Event('linguahub:open-tasks'))}>Công việc đã lưu</button>
     </header>
-    <p className="task-panel-privacy">Tự gợi ý từ chat/email đang mở khi đã cấp quyền. Anh xem trích dẫn rồi chọn Thêm hoặc Bỏ để lưu.</p>
+    <p className="task-panel-privacy">Chỉ đọc chat/email đang mở sau khi được cấp quyền. Với ChatGPT, chữ hiển thị được gửi lên OpenAI để dịch nền hoặc gợi ý công việc; anh xem trích dẫn rồi chọn Thêm hoặc Bỏ để lưu.</p>
+    {model.startsWith('chatgpt:') && <button type="button" className="text-button" disabled={busy} onClick={() => void requestCloudPermission()}>{cloudAllowed ? 'Đã cho phép cloud trong phiên này' : 'Cho phép xử lý cloud'}</button>}
     <button type="button" className="secondary-button task-panel-trigger" disabled={!model || busy || searched} onClick={() => void suggest()}>
       {busy ? 'Đang đọc và tìm việc…' : searched ? 'Đã gợi ý nội dung này' : '⌕ Gợi ý công việc'}
     </button>

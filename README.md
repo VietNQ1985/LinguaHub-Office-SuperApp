@@ -1,6 +1,6 @@
-# LinguaHub Office SuperApp 0.2.16 (Tauri v2 / Rust)
+# LinguaHub Office SuperApp 0.4.2 (Tauri v2 / Rust)
 
-Bản Tauri độc lập của LinguaHub-AI-Pro 0.2.16, dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
+Bản Office độc lập, kế thừa nền Tauri 0.2.16 của LinguaHub-AI-Pro và bổ sung Office Dashboard cùng AI Memory có chọn lọc và Prompt Studio phiên bản hoá. Dùng Rust + WebView2. Hướng dẫn sử dụng: [HUONG-DAN.md](HUONG-DAN.md).
 
 ## Cài đặt và dữ liệu độc lập
 
@@ -8,9 +8,11 @@ Bản Tauri độc lập của LinguaHub-AI-Pro 0.2.16, dùng Rust + WebView2. H
 - Bundle identifier: `com.linguahub.office.superapp`.
 - Dữ liệu ứng dụng: `%APPDATA%\com.linguahub.office.superapp`.
 - Hồ sơ WebView2 và phiên đăng nhập: `%LOCALAPPDATA%\com.linguahub.office.superapp`.
-- Tauri updater chưa được cấu hình trong baseline 0.2.16; bản mới không nhận cập nhật từ kênh LinguaHub AI Pro.
+- Tauri updater chưa được cấu hình trong baseline 0.2.16; bản Office không nhận cập nhật từ kênh LinguaHub AI Pro.
 
 Identifier mới làm cho thư mục dữ liệu, cơ sở dữ liệu SQLite, cấu hình cửa sổ và hồ sơ WebView2 tách khỏi LinguaHub AI Pro 0.2.16. Hai ứng dụng có thể cài và chạy song song. Bản Office SuperApp không tự đọc hoặc nhập cơ sở dữ liệu từ bản Electron hay từ bản Tauri gốc.
+
+Copyright © 2026 Viet Nguyen Quoc. Giấy phép MIT; xem [LICENSE](LICENSE).
 
 ## Cần cài trước (Windows)
 
@@ -42,6 +44,7 @@ GPU cho whisper.cpp (tuỳ chọn): `cargo build --features gpu-vulkan` (cần V
 | Thư mục | Nội dung |
 |---|---|
 | `src/renderer/src` | Giao diện React (khung phải, cài đặt). `bridge.ts` ánh xạ `window.lingua` → lệnh Tauri |
+| `src-tauri/src/office_memory.rs` | Kho SQLite riêng cho dự án, phạm vi capture được duyệt, FTS5, truy xuất RAG, trích dẫn và thư viện prompt có lịch sử phiên bản |
 | `src/page-scripts` | Script chạy trong trang WhatsApp/Telegram/Teams/… (đọc chat, gửi tin, phụ đề) — biên dịch bằng `scripts/gen-page-scripts.ts` ra `src-tauri/page-scripts/*.js` |
 | `src/shared` | Logic dùng chung với bản Electron (điều hướng, chính sách dịch, che dữ liệu…) |
 | `src-tauri/src` | Rust: `lib.rs` (khởi động, tray), `commands.rs` (lệnh IPC), `workspace.rs` (webview con cho từng app), `wv.rs` (eval/CDP WebView2), `ai.rs`/`chatgpt.rs`/`providers.rs` (AI), `stt.rs` (whisper.cpp), `audio.rs` (thu âm hệ thống WASAPI), `db.rs` (SQLite), `secrets.rs` (DPAPI), `notify.rs`, `zalo_pc.rs`, `urls.rs` (danh sách trang được phép) |

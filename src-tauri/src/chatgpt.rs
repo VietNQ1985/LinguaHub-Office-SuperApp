@@ -480,7 +480,7 @@ impl ChatGpt {
                 .append_pair("code_challenge_method", "S256")
                 .append_pair("code_challenge", &challenge);
             if client_id.is_none() {
-                query.append_pair("agent_name_hint", "LinguaHub AI Pro");
+                query.append_pair("agent_name_hint", "LinguaHub Office SuperApp");
             } else if use_saved_account {
                 if let Some(record) = &previous {
                     query

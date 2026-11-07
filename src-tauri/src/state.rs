@@ -4,6 +4,7 @@ use crate::audio::Loopback;
 use crate::chatgpt::ChatGpt;
 use crate::db::Store;
 use crate::models::ModelProxy;
+use crate::office_memory::OfficeMemory;
 use crate::providers::Providers;
 use crate::stt::Stt;
 use serde_json::Value;
@@ -33,6 +34,10 @@ pub struct Inner {
     pub views: HashSet<String>,
     pub panel_width: f64,
     pub panel_collapsed: bool,
+    /// Logical x offset reserved for the React office sidebar.
+    pub sidebar_width: f64,
+    /// Logical height reserved for the React message service switcher.
+    pub service_tabs_height: f64,
     pub chat_read_authorized: bool,
     pub chat_read_paused: bool,
     pub cloud_consent: bool,
@@ -60,6 +65,7 @@ pub struct Inner {
 
 pub struct AppState {
     pub store: Store,
+    pub office_memory: OfficeMemory,
     pub chatgpt: ChatGpt,
     pub providers: Providers,
     pub models: ModelProxy,
@@ -75,6 +81,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(directory: &std::path::Path) -> anyhow::Result<Self> {
         let store = Store::open(directory)?;
+        let office_memory = OfficeMemory::open(directory)?;
         let chatgpt = ChatGpt::load(directory);
         let providers = Providers::load(directory);
         let models = ModelProxy::new(directory);
@@ -86,6 +93,8 @@ impl AppState {
             views: HashSet::new(),
             panel_width: preferences["panelWidth"].as_f64().unwrap_or(360.0),
             panel_collapsed: false,
+            sidebar_width: 232.0,
+            service_tabs_height: 0.0,
             chat_read_authorized: false,
             chat_read_paused: false,
             cloud_consent: store.manual_cloud_consent(),
@@ -111,6 +120,7 @@ impl AppState {
         };
         Ok(AppState {
             store,
+            office_memory,
             chatgpt,
             providers,
             models,

@@ -3,7 +3,7 @@
 
 use crate::ai::{self, ExternalFn, Responder, TextFn, Timing};
 use crate::dialog::{self, Ask};
-use crate::sample_files::{self, SampleSearchResult};
+use crate::sample_files::{self, SampleFileInspection, SampleSearchResult};
 use crate::state::AppState;
 use crate::urls;
 use crate::workspace;
@@ -86,6 +86,36 @@ pub fn workspace_panel_layout(
     if persist {
         let _ = state.store.set_panel_width(panel as i64);
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn workspace_sidebar_layout(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    collapsed: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.lock().sidebar_width = if collapsed { 68.0 } else { 232.0 };
+    workspace::layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn workspace_service_tabs_layout(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    visible: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.lock().service_tabs_height = if visible {
+        workspace::SERVICE_SWITCHER_HEIGHT
+    } else {
+        0.0
+    };
+    workspace::layout(&app);
     Ok(())
 }
 
@@ -302,6 +332,270 @@ pub async fn sample_files_search(
     .await
     .map_err(fail)?
     .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn sample_file_inspect(
+    webview: Webview,
+    state: State<'_, AppState>,
+    path: String,
+) -> Res<SampleFileInspection> {
+    trusted(&webview)?;
+    let roots = state.store.sample_search_roots();
+    tokio::task::spawn_blocking(move || sample_files::inspect_file(&path, &roots))
+        .await
+        .map_err(fail)?
+        .map_err(fail)
+}
+
+// ---------- Lưu PDF tự động ----------
+
+#[tauri::command]
+pub fn pdf_export_settings(
+    webview: Webview,
+    state: State<AppState>,
+) -> Res<crate::pdf_export::PdfExportSettings> {
+    trusted(&webview)?;
+    Ok(state.store.pdf_export_settings())
+}
+
+#[tauri::command]
+pub fn pdf_export_settings_set(
+    webview: Webview,
+    state: State<AppState>,
+    settings: crate::pdf_export::PdfExportSettings,
+) -> Res<crate::pdf_export::PdfExportSettings> {
+    trusted(&webview)?;
+    let normalized = crate::pdf_export::normalize_settings(settings).map_err(fail)?;
+    state
+        .store
+        .set_pdf_export_settings(&normalized)
+        .map_err(fail)?;
+    Ok(normalized)
+}
+
+#[tauri::command]
+pub async fn pdf_export_list_source(
+    webview: Webview,
+    state: State<'_, AppState>,
+) -> Res<Vec<sample_files::SampleFile>> {
+    trusted(&webview)?;
+    let Some(folder) = state.store.pdf_export_settings().source_folder else {
+        return Ok(Vec::new());
+    };
+    tokio::task::spawn_blocking(move || crate::pdf_export::list_source(&folder))
+        .await
+        .map_err(fail)?
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_convert(
+    webview: Webview,
+    state: State<'_, AppState>,
+    path: String,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = state.store.pdf_export_settings();
+    let roots = state.store.sample_search_roots();
+    tokio::task::spawn_blocking(move || {
+        crate::pdf_export::convert(&path, &file_name, &settings, &roots)
+    })
+    .await
+    .map_err(fail)?
+    .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_scan_erp_page(
+    webview: Webview,
+    app: AppHandle,
+) -> Res<crate::pdf_export::ErpPageSnapshot> {
+    trusted(&webview)?;
+    let views = workspace::erp_views(&app);
+    if views.is_empty() {
+        return Ok(crate::pdf_export::ErpPageSnapshot::default());
+    }
+    let mut fallback: Option<crate::pdf_export::ErpPageSnapshot> = None;
+    for (tab_id, view) in views {
+        let Ok(raw) = wv::eval_json(&view, crate::pdf_export::ERP_SCAN_SCRIPT).await else {
+            continue;
+        };
+        let Ok(mut snap) = serde_json::from_value::<crate::pdf_export::ErpPageSnapshot>(raw) else {
+            continue;
+        };
+        snap.tab_id = tab_id;
+        if !snap.attachments.is_empty() {
+            return Ok(snap);
+        }
+        if fallback.is_none() {
+            fallback = Some(snap);
+        }
+    }
+    Ok(fallback.unwrap_or_default())
+}
+
+fn expand_truncated_pdf_name(
+    requested_pdf_name: &str,
+    display_name: &str,
+    discovered_full_name: &str,
+) -> String {
+    let short_stem = crate::pdf_export::clean_attachment_stem(display_name);
+    let full_stem = crate::pdf_export::clean_attachment_stem(discovered_full_name);
+    if !short_stem.is_empty()
+        && full_stem.chars().count() > short_stem.chars().count()
+        && full_stem
+            .to_lowercase()
+            .starts_with(&short_stem.to_lowercase())
+        && requested_pdf_name.contains(&short_stem)
+    {
+        requested_pdf_name.replacen(&short_stem, &full_stem, 1)
+    } else {
+        requested_pdf_name.to_owned()
+    }
+}
+
+#[tauri::command]
+pub async fn pdf_export_convert_erp_attachment(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tab_id: String,
+    att_id: String,
+    display_name: String,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = state.store.pdf_export_settings();
+    if settings.output_folder.is_none() {
+        return Err("Chưa chọn thư mục lưu PDF. Anh bấm ⚙ Cài đặt ở mục Lưu PDF để chọn.".into());
+    }
+    let views = workspace::erp_views(&app);
+    let view = views
+        .iter()
+        .find(|(id, _)| !tab_id.is_empty() && id == &tab_id)
+        .or_else(|| views.first())
+        .map(|(_, v)| v.clone())
+        .ok_or("Chưa mở tab Arito ERP nào.")?;
+
+    let mut watch_folders = Vec::new();
+    if let Some(dl) = crate::pdf_export::default_downloads_folder() {
+        watch_folders.push(dl);
+    }
+    if let Some(src) = settings.source_folder.as_deref() {
+        let p = std::path::PathBuf::from(src);
+        if p.is_dir() && !watch_folders.contains(&p) {
+            watch_folders.push(p);
+        }
+    }
+
+    let start_ms = crate::pdf_export::now_ms() as u64;
+    let trigger_script = crate::pdf_export::erp_trigger_download_script(&att_id, &display_name);
+    let _ = wv::eval_json(&view, &trigger_script).await;
+
+    let roots = state.store.sample_search_roots();
+    for attempt in 0..40 {
+        sleep(300).await;
+        // 1. Check in-page JS hook capture (Blob / Fetch / XHR / <a download>)
+        if let Ok(raw) = wv::eval_json(&view, crate::pdf_export::ERP_POLL_CAPTURE_SCRIPT).await {
+            if !raw.is_null() {
+                if let Ok(cap) =
+                    serde_json::from_value::<crate::pdf_export::CapturedErpPayload>(raw)
+                {
+                    if let Ok(bytes) = crate::pdf_export::decode_base64_payload(&cap.base64) {
+                        if !bytes.is_empty() {
+                            let hint_name = if !cap.file_name.trim().is_empty() {
+                                cap.file_name.clone()
+                            } else {
+                                display_name.clone()
+                            };
+                            let final_pdf_name =
+                                expand_truncated_pdf_name(&file_name, &display_name, &hint_name);
+                            let settings_clone = settings.clone();
+                            let mime = cap.mime_type.clone();
+                            return tokio::task::spawn_blocking(move || {
+                                crate::pdf_export::convert_bytes(
+                                    &bytes,
+                                    &hint_name,
+                                    &mime,
+                                    &final_pdf_name,
+                                    &settings_clone,
+                                )
+                            })
+                            .await
+                            .map_err(fail)?
+                            .map_err(fail);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check Windows Downloads / source_folder for newly downloaded file (or prefix match after ~2.4s)
+        let folders_clone = watch_folders.clone();
+        let disp_clone = display_name.clone();
+        let allow_prefix = attempt >= 8;
+        let found = tokio::task::spawn_blocking(move || {
+            crate::pdf_export::find_downloaded_attachment(
+                &folders_clone,
+                start_ms,
+                &disp_clone,
+                allow_prefix,
+            )
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(downloaded_path) = found {
+            sleep(350).await;
+            let discovered_name = downloaded_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| display_name.clone());
+            let final_pdf_name =
+                expand_truncated_pdf_name(&file_name, &display_name, &discovered_name);
+            let path_str = downloaded_path.to_string_lossy().into_owned();
+            let settings_clone = settings.clone();
+            let roots_clone = roots.clone();
+            return tokio::task::spawn_blocking(move || {
+                crate::pdf_export::convert(&path_str, &final_pdf_name, &settings_clone, &roots_clone)
+            })
+            .await
+            .map_err(fail)?
+            .map_err(fail);
+        }
+    }
+
+    Err(format!(
+        "Chưa tải được tệp \"{}\" từ trang ERP. Anh có thể bấm trực tiếp vào tên tệp trên ERP để tải về máy rồi hệ thống sẽ tự chuyển sang PDF.",
+        display_name
+    ))
+}
+
+#[tauri::command]
+pub async fn app_update_check(webview: Webview) -> Res<crate::updater::AppUpdateInfo> {
+    trusted(&webview)?;
+    crate::updater::check_github_update().await.map_err(fail)
+}
+
+#[tauri::command]
+pub async fn app_update_install(
+    webview: Webview,
+    app: AppHandle,
+    download_url: String,
+) -> Res<String> {
+    trusted(&webview)?;
+    let path = crate::updater::download_and_launch_installer(&download_url)
+        .await
+        .map_err(fail)?;
+    // Close the running app after a brief delay so the NSIS installer can overwrite the exe cleanly.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        app.exit(0);
+    });
+    Ok(path)
 }
 
 #[tauri::command]
@@ -1140,13 +1434,33 @@ fn cloud_provider_name(model: &str) -> Option<&'static str> {
 }
 
 fn has_cloud_consent_for_task(task: &str, manual: bool, background: bool) -> bool {
-    if matches!(
+    if task == "summary" {
+        manual || background
+    } else if matches!(
         task,
         "translateLatest" | "translateMessages" | "replyFromChat" | "replyTranslationFromChat"
     ) {
         background
     } else {
         manual
+    }
+}
+
+#[cfg(test)]
+mod cloud_consent_tests {
+    use super::has_cloud_consent_for_task;
+
+    #[test]
+    fn summary_accepts_the_consent_used_by_its_caller() {
+        assert!(has_cloud_consent_for_task("summary", true, false));
+        assert!(has_cloud_consent_for_task("summary", false, true));
+        assert!(!has_cloud_consent_for_task("summary", false, false));
+    }
+
+    #[test]
+    fn background_translation_still_requires_background_consent() {
+        assert!(has_cloud_consent_for_task("translateLatest", false, true));
+        assert!(!has_cloud_consent_for_task("translateLatest", true, false));
     }
 }
 
@@ -1450,7 +1764,7 @@ pub async fn chatgpt_background_cloud_consent(
     if state.lock().background_cloud_consent {
         return Ok(true);
     }
-    let (response, _) = dialog::ask(&app, Ask::question("Cho phép dịch tin nhắn hiển thị bằng ChatGPT?", "Gửi chữ lấy từ các tin nhắn đang hiển thị đến OpenAI để dịch tự động?", "LinguaHub đọc nội dung chữ từ trang ngay trên máy. Chỉ chữ của bong bóng tin đang hiển thị được gửi; không gửi ảnh chụp hoặc nội dung chat ẩn. Bật che email/số điện thoại sẽ áp dụng trước khi gửi nhưng có thể bỏ sót. Dừng dịch để ngừng gửi chữ. Anh có thể từ chối và dùng Ollama trên máy.", ["Không cho phép", "Cho phép gửi chữ hiển thị"])).await;
+    let (response, _) = dialog::ask(&app, Ask::question("Cho phép xử lý chat/email bằng ChatGPT?", "Gửi chữ chat/email đang hiển thị đến OpenAI để dịch nền hoặc tự động gợi ý công việc?", "LinguaHub chỉ gửi chữ đang hiển thị; không gửi ảnh chụp hoặc nội dung chat/email ẩn. Quyền cloud nền chỉ giữ trong phiên app này và sẽ được hỏi lại lần sau. Bật che email/số điện thoại sẽ áp dụng trước khi gửi nhưng có thể bỏ sót. Anh có thể từ chối và dùng Ollama trên máy.", ["Không cho phép", "Cho phép gửi chữ hiển thị"])).await;
     let allowed = response == 1;
     state.lock().background_cloud_consent = allowed;
     Ok(allowed)
@@ -1490,12 +1804,23 @@ pub fn chatgpt_usage_settings(webview: Webview) -> Res<()> {
 pub fn providers_status(webview: Webview, state: State<AppState>) -> Res<Value> {
     trusted(&webview)?;
     let secrets = state.providers.get();
+    let (chatgpt_manual_consent, chatgpt_background_consent, masking) = {
+        let inner = state.lock();
+        (
+            inner.cloud_consent,
+            inner.background_cloud_consent,
+            inner.masking,
+        )
+    };
     Ok(json!({
         "geminiKeySet": secrets.gemini_key.is_some(),
         "remoteUrl": secrets.remote_url.unwrap_or_default(),
         "remoteTokenSet": secrets.remote_token.is_some(),
         "geminiConsent": state.store.provider_consent("gemini"),
         "remoteConsent": state.store.provider_consent("remote"),
+        "chatgptManualConsent": chatgpt_manual_consent,
+        "chatgptBackgroundConsent": chatgpt_background_consent,
+        "masking": masking,
     }))
 }
 
@@ -1518,6 +1843,16 @@ pub fn providers_consent(
     enabled: bool,
 ) -> Res<bool> {
     trusted(&webview)?;
+    if provider == "chatgpt_manual" && !enabled {
+        state.store.set_manual_cloud_consent(false).map_err(fail)?;
+        let mut inner = state.lock();
+        inner.cloud_consent = false;
+        return Ok(false);
+    }
+    if provider == "chatgpt_background" && !enabled {
+        state.lock().background_cloud_consent = false;
+        return Ok(false);
+    }
     state
         .store
         .set_provider_consent(&provider, enabled)
@@ -2010,6 +2345,279 @@ pub fn tasks_save(webview: Webview, state: State<AppState>, input: Value) -> Res
 pub fn tasks_delete(webview: Webview, state: State<AppState>, id: String) -> Res<()> {
     trusted(&webview)?;
     state.store.task_delete(&id).map_err(fail)
+}
+
+// ---------- local, opt-in AI memory ----------
+
+#[tauri::command]
+pub fn memory_projects_list(webview: Webview, state: State<AppState>) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state.office_memory.projects_list().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_project_save(
+    webview: Webview,
+    state: State<AppState>,
+    id: Option<String>,
+    name: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .project_save(id.as_deref(), &name)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_project_delete(webview: Webview, state: State<AppState>, id: String) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.project_delete(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_capture_scopes_list(webview: Webview, state: State<AppState>) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state.office_memory.capture_scopes_list().map_err(fail)
+}
+
+/// Called from the contextual panel while a workspace is visible. Visible-chat read and memory
+/// capture are separate grants; this command requires both and only enables this conversation.
+#[tauri::command]
+pub async fn memory_capture_visible(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+    account_label: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    let provider = {
+        let inner = state.lock();
+        if !inner.chat_read_authorized || inner.chat_read_paused {
+            return Err(
+                "Cần cấp quyền đọc hội thoại đang hiển thị riêng trước khi lưu vào AI Memory."
+                    .into(),
+            );
+        }
+        inner.current.clone()
+    };
+    let snapshot = workspace::read_visible(&app).await.map_err(fail)?;
+    let conversation_id = snapshot["conversationId"]
+        .as_str()
+        .ok_or("Không nhận diện được hội thoại đang hiển thị.")?;
+    let messages = snapshot["messages"]
+        .as_array()
+        .ok_or("Không đọc được tin nhắn trong hội thoại.")?;
+    if messages.is_empty() {
+        return Err("Hội thoại đang hiển thị chưa có nội dung chữ để lưu.".into());
+    }
+    let account_key = crate::office_memory::account_key(&provider, &account_label);
+    let display_name = format!(
+        "Hội thoại {}",
+        &conversation_id[..8.min(conversation_id.len())]
+    );
+    let source_url = app
+        .get_webview(&format!("svc-{provider}"))
+        .and_then(|view| view.url().ok())
+        .map(|url| url.to_string());
+    state
+        .office_memory
+        .set_capture_scope(
+            &provider,
+            &account_key,
+            &account_label,
+            conversation_id,
+            &project_id,
+            &display_name,
+            true,
+            true,
+        )
+        .map_err(fail)?;
+    state
+        .office_memory
+        .ingest_approved_event(
+            &provider,
+            &account_key,
+            conversation_id,
+            source_url.as_deref(),
+            messages,
+        )
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_set_capture_enabled(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+    enabled: bool,
+    confirmed: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .set_capture_enabled(&id, enabled, confirmed)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_pause_all(webview: Webview, state: State<AppState>) -> Res<usize> {
+    trusted(&webview)?;
+    state.office_memory.pause_all().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_remove_capture_scope(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.remove_capture_scope(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_search(
+    webview: Webview,
+    state: State<AppState>,
+    query: String,
+    project_id: Option<String>,
+    provider: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    limit: usize,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .search(
+            &query,
+            project_id.as_deref(),
+            provider.as_deref(),
+            from,
+            to,
+            limit,
+        )
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_get_source(
+    webview: Webview,
+    state: State<AppState>,
+    id: String,
+) -> Res<Option<Value>> {
+    trusted(&webview)?;
+    state.office_memory.get_record(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_delete_source(webview: Webview, state: State<AppState>, id: String) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.delete_record(&id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_rebuild_index(webview: Webview, state: State<AppState>) -> Res<usize> {
+    trusted(&webview)?;
+    state.office_memory.rebuild_index().map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_export_project(
+    webview: Webview,
+    state: State<AppState>,
+    project_id: String,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .export_project(&project_id)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompts_list(
+    webview: Webview,
+    state: State<AppState>,
+    project_id: Option<String>,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompts_list(project_id.as_deref())
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_versions(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+) -> Res<Vec<Value>> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_versions(&prompt_id)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_save(webview: Webview, state: State<AppState>, input: Value) -> Res<Value> {
+    trusted(&webview)?;
+    state.office_memory.prompt_save(&input).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_activate(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+    version: i64,
+) -> Res<()> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_activate(&prompt_id, version)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prompt_delete(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.office_memory.prompt_delete(&prompt_id).map_err(fail)
+}
+
+#[tauri::command]
+pub fn memory_prepare_prompt(
+    webview: Webview,
+    state: State<AppState>,
+    prompt_id: String,
+    query: String,
+    project_id: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    top_k: usize,
+    variables: Value,
+) -> Res<Value> {
+    trusted(&webview)?;
+    state
+        .office_memory
+        .prompt_prepare(
+            &prompt_id,
+            &query,
+            project_id.as_deref(),
+            from,
+            to,
+            top_k,
+            &variables,
+        )
+        .map_err(fail)
 }
 
 #[tauri::command]

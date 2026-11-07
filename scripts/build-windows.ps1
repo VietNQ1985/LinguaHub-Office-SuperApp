@@ -6,6 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$packageMetadata = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
+$appVersion = [string]$packageMetadata.version
+if (-not $appVersion) { throw 'The application version was not found in package.json.' }
 Push-Location $repoRoot
 
 try {
@@ -27,7 +30,8 @@ try {
         }
     }
 
-    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    $profileRoot = $env:USERPROFILE.Trim()
+    $cargoBin = Join-Path $profileRoot '.cargo\bin'
     if (Test-Path $cargoBin) { $env:PATH = "$cargoBin;$env:PATH" }
 
     if ($TargetDir) {
@@ -73,14 +77,20 @@ try {
 
     $targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $repoRoot 'src-tauri\target' }
     $bundleDirectory = Join-Path $targetDirectory 'release\bundle\nsis'
-    $installer = Get-ChildItem -LiteralPath $bundleDirectory -Filter '*0.2.16*x64-setup.exe' |
+    $installer = Get-ChildItem -LiteralPath $bundleDirectory -Filter "*$appVersion*x64-setup.exe" |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
-    if (-not $installer) { throw "NSIS installer for version 0.2.16 was not found in $bundleDirectory" }
+    if (-not $installer) { throw "NSIS installer for version $appVersion was not found in $bundleDirectory" }
     if ($installer.Length -lt 2MB) { throw 'Installer is smaller than expected.' }
 
-    $installer | Select-Object FullName, Length
-    Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256
+    $artifactDirectory = Join-Path $repoRoot 'output\windows'
+    New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
+    $artifactPath = Join-Path $artifactDirectory $installer.Name
+    if (Test-Path -LiteralPath $artifactPath) { throw "Installer artifact already exists: $artifactPath" }
+    Copy-Item -LiteralPath $installer.FullName -Destination $artifactPath
+
+    Get-Item -LiteralPath $artifactPath | Select-Object FullName, Length
+    Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256
 }
 finally {
     Pop-Location
