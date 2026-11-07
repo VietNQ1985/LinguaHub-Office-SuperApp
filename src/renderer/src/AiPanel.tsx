@@ -156,13 +156,17 @@ export function AiPanel({workspaceActive=true}:{workspaceActive?:boolean}) {
   const saveReplyModel = (value: string) => {
     invalidateReply()
     setReplyModel(value)
-    void window.lingua.setPreferences({ theme, model, replyModel: value }).catch(() => setError('Không lưu được mô hình gợi ý.'))
+    void window.lingua.setPreferences({ theme, model, replyModel: value }).then(() => {
+      window.dispatchEvent(new Event('linguahub:preferences-changed'))
+    }).catch(() => setError('Không lưu được mô hình gợi ý.'))
   }
   const saveModel = (value: string) => {
     invalidateReply()
     setModel(value)
     setError('')
-    void window.lingua.setPreferences({ theme, model: value }).catch(() => setError('Không lưu được mô hình AI.'))
+    void window.lingua.setPreferences({ theme, model: value }).then(() => {
+      window.dispatchEvent(new Event('linguahub:preferences-changed'))
+    }).catch(() => setError('Không lưu được mô hình AI.'))
     const slug = value.startsWith('chatgpt:') ? value.slice(8) : ''
     if (isGpt6Model(slug) && !modelReasoningEfforts[slug]?.includes('none') && reasoningEffort === 'none') {
       setReasoningEffort('low')

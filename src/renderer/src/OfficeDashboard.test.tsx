@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { expect, test, vi } from 'vitest'
 import { OfficeDashboard, readDashboardWidgets } from './OfficeDashboard'
-import { buildAskRequest, OfficePromptBar } from './OfficePromptBar'
+import { buildAskRequest, OfficePromptBar, resolveOfficeModel } from './OfficePromptBar'
+import { DEFAULT_CHATGPT_MODEL } from '../../shared/model-reasoning'
 import type { WorkTask } from './WorkTasks'
 
 const callbacks = {
@@ -87,6 +88,31 @@ test('AI prompt does not run automatically and task context is included only aft
     expect(runAi).not.toHaveBeenCalled()
     expect(buildAskRequest(' Việc nào cần làm? ', tasks, false)).toEqual({ question: 'Việc nào cần làm?', context: '' })
     expect(JSON.parse(buildAskRequest('Việc nào cần làm?', tasks, true).context)).toEqual([{ title: 'Rà soát báo giá', status: 'todo', waiting: false, dueAt: null, important: false }])
+  } finally {
+    await app.unmount()
+    dom.window.close()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('office AI resolves the same default and configured model priority as settings', () => {
+  expect(resolveOfficeModel({ model: '', replyModel: '' })).toBe(DEFAULT_CHATGPT_MODEL)
+  expect(resolveOfficeModel({ model: 'ollama:qwen3', replyModel: '' })).toBe('ollama:qwen3')
+  expect(resolveOfficeModel({ model: 'ollama:qwen3', replyModel: 'gemini:flash' })).toBe('gemini:flash')
+})
+
+test('office prompt uses its default model when no preference is saved', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://localhost' })
+  vi.stubGlobal('window', dom.window)
+  vi.stubGlobal('document', dom.window.document)
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  Object.assign(dom.window, { lingua: { getPreferences: async () => ({ model: '', replyModel: '', panelWidth: 360, theme: 'light' }), cancelAi: async () => true } })
+  const app = mount(dom, createElement(OfficePromptBar, { tasks: [], onConfigureAi: vi.fn() }))
+  try {
+    await app.render()
+    await act(async () => { await Promise.resolve() })
+    expect(dom.window.document.body.textContent).not.toContain('Chưa chọn mô hình AI')
+    expect(dom.window.document.body.textContent).not.toContain('Chọn mô hình AI')
   } finally {
     await app.unmount()
     dom.window.close()

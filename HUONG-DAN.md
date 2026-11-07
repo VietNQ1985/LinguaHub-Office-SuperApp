@@ -1,8 +1,8 @@
-# LinguaHub Office SuperApp 0.4.0 — Hướng dẫn sử dụng
+# LinguaHub Office SuperApp 0.4.1 — Hướng dẫn sử dụng
 
 LinguaHub gom các ứng dụng nhắn tin/họp (WhatsApp, Telegram, Microsoft Teams, Outlook, Zalo Web, Zoom, Google Meet) vào một cửa sổ. Khung bên phải dịch tin nhắn sang tiếng Việt, gợi ý câu trả lời bằng tiếng Anh và có phụ đề cuộc họp.
 
-Bản Office 0.4.0 bổ sung AI Memory có chọn lọc và Prompt Studio; Dashboard và điều hướng workspace của bản 0.3.0 vẫn được giữ nguyên. Bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
+Bản Office 0.4.1 sửa việc Dashboard không nhận mô hình AI mặc định/đã lưu trong Cài đặt; đồng thời giữ AI Memory có chọn lọc, Prompt Studio, Dashboard và điều hướng workspace. Bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
 
 | | Bản Tauri (Rust) — khuyên dùng | Bản Electron |
 |---|---|---|
@@ -67,7 +67,9 @@ Cài đặt chia thành 5 nhóm:
 
 - **🧩 Ứng dụng và quyền:** chọn app; cấp quyền đọc chat và quyền gửi nội dung lên AI đám mây.
 - **🤖 AI:**
-  - **Chọn mô hình:** mô hình dịch và mô hình gợi ý trả lời có thể khác nhau.
+  - Mở bánh răng **Cài đặt** trên thanh trên cùng → **AI**.
+  - **Chọn mô hình:** mô hình dịch và mô hình gợi ý/trả lời có thể khác nhau. Nếu chưa lưu model riêng, app dùng mặc định **ChatGPT · GPT-6 Luna**.
+  - Cài đặt model của Office SuperApp được lưu riêng; model đã chọn trong LinguaHub AI Pro không tự chuyển sang Office.
   - **Nguồn AI:**
     - **Ollama trên máy:** miễn phí, không gửi dữ liệu ra ngoài. Mặc định dùng `qwen2.5:7b`, chiếm khoảng 3 GB RAM khi đang dùng và tự nhả sau 3 phút rảnh.
     - **ChatGPT:** đăng nhập bằng tài khoản ChatGPT trả phí. Tài khoản Free sẽ báo lỗi.
