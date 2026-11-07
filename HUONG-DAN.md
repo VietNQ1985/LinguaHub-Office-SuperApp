@@ -1,8 +1,8 @@
-# LinguaHub Office SuperApp 0.2.16 — Hướng dẫn sử dụng
+# LinguaHub Office SuperApp 0.3.0 — Hướng dẫn sử dụng
 
 LinguaHub gom các ứng dụng nhắn tin/họp (WhatsApp, Telegram, Microsoft Teams, Outlook, Zalo Web, Zoom, Google Meet) vào một cửa sổ. Khung bên phải dịch tin nhắn sang tiếng Việt, gợi ý câu trả lời bằng tiếng Anh và có phụ đề cuộc họp.
 
-Có 2 bản, chức năng giống nhau:
+Bản Office 0.3.0 bổ sung Dashboard và điều hướng workspace; bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
 
 | | Bản Tauri (Rust) — khuyên dùng | Bản Electron |
 |---|---|---|

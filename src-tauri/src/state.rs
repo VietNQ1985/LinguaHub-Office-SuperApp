@@ -33,6 +33,10 @@ pub struct Inner {
     pub views: HashSet<String>,
     pub panel_width: f64,
     pub panel_collapsed: bool,
+    /// Logical x offset reserved for the React office sidebar.
+    pub sidebar_width: f64,
+    /// Logical height reserved for the React message service switcher.
+    pub service_tabs_height: f64,
     pub chat_read_authorized: bool,
     pub chat_read_paused: bool,
     pub cloud_consent: bool,
@@ -86,6 +90,8 @@ impl AppState {
             views: HashSet::new(),
             panel_width: preferences["panelWidth"].as_f64().unwrap_or(360.0),
             panel_collapsed: false,
+            sidebar_width: 232.0,
+            service_tabs_height: 0.0,
             chat_read_authorized: false,
             chat_read_paused: false,
             cloud_consent: store.manual_cloud_consent(),

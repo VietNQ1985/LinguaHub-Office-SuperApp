@@ -372,8 +372,8 @@ export function AiPanel({workspaceActive=true}:{workspaceActive?:boolean}) {
     <div className="assistant-heading">
       <span className="assistant-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h8M8 3v2M5.5 5c.8 3.2 3 5.6 6 7M10.5 5c-.7 3.6-3 6.5-6.5 8"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/></svg></span>
       <div>
-        <h2>Bản dịch tiếng Việt</h2>
-        <p>Đọc tin nhắn dễ dàng hơn</p>
+        <h2>Trợ lý AI theo ngữ cảnh</h2>
+        <p>Dịch tin nhắn, email và cuộc họp · gợi ý trả lời</p>
       </div>
     </div>
 

@@ -73,10 +73,10 @@ try {
 
     $targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $repoRoot 'src-tauri\target' }
     $bundleDirectory = Join-Path $targetDirectory 'release\bundle\nsis'
-    $installer = Get-ChildItem -LiteralPath $bundleDirectory -Filter '*0.2.16*x64-setup.exe' |
+    $installer = Get-ChildItem -LiteralPath $bundleDirectory -Filter '*0.3.0*x64-setup.exe' |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
-    if (-not $installer) { throw "NSIS installer for version 0.2.16 was not found in $bundleDirectory" }
+    if (-not $installer) { throw "NSIS installer for version 0.3.0 was not found in $bundleDirectory" }
     if ($installer.Length -lt 2MB) { throw 'Installer is smaller than expected.' }
 
     $installer | Select-Object FullName, Length

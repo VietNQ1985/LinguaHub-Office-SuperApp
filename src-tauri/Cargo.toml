@@ -1,6 +1,6 @@
 [package]
 name = "linguahub-office-superapp"
-version = "0.2.16"
+version = "0.3.0"
 description = "LinguaHub on Tauri: messaging workspace with on-device chat translation"
 edition = "2021"
 rust-version = "1.80"
