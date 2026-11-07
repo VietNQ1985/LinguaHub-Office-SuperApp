@@ -546,6 +546,42 @@ fn keep_translation(source: &str, translation: &str) -> String {
     }
 }
 
+fn parse_json_lenient(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+        return Some(val);
+    }
+    if let Some(fence_start) = trimmed.find("```") {
+        let after_ticks = &trimmed[fence_start + 3..];
+        let body = after_ticks
+            .strip_prefix("json")
+            .or_else(|| after_ticks.strip_prefix("JSON"))
+            .unwrap_or(after_ticks)
+            .trim_start();
+        if let Some(fence_end) = body.find("```") {
+            let candidate = body[..fence_end].trim();
+            if let Ok(val) = serde_json::from_str::<Value>(candidate) {
+                return Some(val);
+            }
+        }
+    }
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start < end {
+            if let Ok(val) = serde_json::from_str::<Value>(&trimmed[start..=end]) {
+                return Some(val);
+            }
+        }
+    }
+    if let (Some(start), Some(end)) = (trimmed.find('['), trimmed.rfind(']')) {
+        if start < end {
+            if let Ok(val) = serde_json::from_str::<Value>(&trimmed[start..=end]) {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
 fn validate(
     task: &str,
     source: &str,
@@ -564,19 +600,37 @@ fn validate(
         return Ok(json!({ "translation": translation, "explanation": "" }));
     }
     let invalid = || bad("AI trả kết quả không đúng định dạng.");
-    let parsed: Value = serde_json::from_str(content.trim()).map_err(|_| invalid())?;
+    let parsed: Value = parse_json_lenient(&content).ok_or_else(invalid)?;
     match task {
         "translateMessages" => {
             let items = parsed
                 .get("translations")
                 .and_then(Value::as_array)
+                .or_else(|| parsed.as_array())
                 .ok_or_else(invalid)?;
             let mut out = Vec::new();
-            for item in items {
-                let (Some(id), Some(translation)) = (
-                    item.get("id").and_then(Value::as_str),
-                    item.get("translation").and_then(Value::as_str),
-                ) else {
+            for (idx, item) in items.iter().enumerate() {
+                let id_owned: Option<String> = item
+                    .get("id")
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                    })
+                    .or_else(|| {
+                        if items.len() == translation_ids.len() {
+                            translation_ids.get(idx).cloned()
+                        } else {
+                            None
+                        }
+                    });
+                let translation_str: Option<&str> = item
+                    .get("translation")
+                    .or_else(|| item.get("text"))
+                    .or_else(|| item.get("vietnamese"))
+                    .and_then(Value::as_str);
+                let (Some(id), Some(translation)) = (id_owned, translation_str) else {
                     return Err(invalid());
                 };
                 let source_text = serde_json::from_str::<Value>(source)
@@ -585,7 +639,7 @@ fn validate(
                         value["messages"].as_array().and_then(|messages| {
                             messages
                                 .iter()
-                                .find(|message| message["id"] == id)
+                                .find(|message| message["id"].as_str() == Some(id.as_str()))
                                 .and_then(|message| message["text"].as_str().map(str::to_owned))
                         })
                     })

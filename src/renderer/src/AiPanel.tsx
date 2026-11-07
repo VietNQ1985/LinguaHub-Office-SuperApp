@@ -9,6 +9,8 @@ import { VoiceInput } from './VoiceInput'
 import { PermissionsPanel } from './PermissionsPanel'
 import { AppsPanel } from './AppsPanel'
 import { SpeechSettings } from './SpeechSettings'
+import { PdfExportSettingsForm } from './PdfExportPanel'
+import { AppUpdateCard } from './AppUpdateCard'
 import { ZaloCallBar } from './ZaloCallBar'
 import { ChatGPTAccount } from './ChatGPTAccount'
 import { AdvancedSettings } from './AdvancedSettings'
@@ -2109,6 +2111,10 @@ export function AiPanel({
                     )}
                   </div>
                 </div>
+                <div className="settings-group">
+                  <h4>📄 Lưu PDF tự động (tệp đính kèm ERP)</h4>
+                  <PdfExportSettingsForm compact />
+                </div>
               </section>
             )}
 
@@ -2130,6 +2136,7 @@ export function AiPanel({
                 <h3 className="settings-section-title">
                   <span aria-hidden="true">🎨</span>Giao diện, Thông báo & Dữ liệu
                 </h3>
+                <AppUpdateCard />
                 <div className="settings-group">
                   <h4>Giao diện & Cửa sổ</h4>
                   <label htmlFor="theme-choice">Chế độ hiển thị màu sắc</label>

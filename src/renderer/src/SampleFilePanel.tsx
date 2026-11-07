@@ -22,6 +22,7 @@ import {
   type ErpSampleFolder,
   type ErpToolId,
 } from './erpFileTools'
+import { PdfExportPanel } from './PdfExportPanel'
 
 type SampleSearchResult = {
   sampleId: string
@@ -1049,6 +1050,8 @@ export function SampleFilePanel({
           )}
         </div>
       </div>
+
+      <PdfExportPanel sampleId={result?.sampleId || sampleId.trim()} sampleFiles={selectedFiles} />
     </section>
   )
 }

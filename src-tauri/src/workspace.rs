@@ -155,7 +155,7 @@ fn prepare_popup_slot(
             .skip_taskbar(true)
             .additional_browser_args(BROWSER_ARGS)
             .on_navigation(move |url| {
-                let allowed = url.as_str() == "about:blank" || popup_target_allowed(url);
+                let allowed = url.as_str() == "about:blank" || url.scheme() == "blob" || popup_target_allowed(url);
                 if allowed
                     && navigation_state.claimed.load(Ordering::Acquire)
                     && popup_target_allowed(url)
@@ -467,7 +467,7 @@ pub fn open_web_tab(app: &AppHandle, id: &str, address: &str, close: bool) -> an
                     }
                     return false;
                 }
-                url.scheme() == "https" || url.as_str() == "about:blank"
+                url.scheme() == "https" || url.scheme() == "blob" || url.as_str() == "about:blank"
             });
         #[cfg(windows)]
         let builder = {
@@ -575,6 +575,34 @@ pub fn view<R: Runtime>(app: &AppHandle<R>, service: &str) -> Option<Webview<R>>
 pub fn current_view<R: Runtime>(app: &AppHandle<R>) -> Option<(String, Webview<R>)> {
     let current = app.state::<AppState>().lock().current.clone();
     view(app, &current).map(|webview| (current, webview))
+}
+
+/// Returns open ERP web tabs (`web-*`), with the currently active tab first.
+pub fn erp_views<R: Runtime>(app: &AppHandle<R>) -> Vec<(String, Webview<R>)> {
+    let (current, labels) = {
+        let state = app.state::<AppState>();
+        let inner = state.lock();
+        (
+            inner.current.clone(),
+            inner.views.iter().cloned().collect::<Vec<_>>(),
+        )
+    };
+    let mut result = Vec::new();
+    if current.starts_with("web-") {
+        if let Some(webview) = view(app, &current) {
+            result.push((current.clone(), webview));
+        }
+    }
+    for label in labels {
+        if let Some(id) = label.strip_prefix("svc-") {
+            if id.starts_with("web-") && id != current {
+                if let Some(webview) = app.get_webview(&label) {
+                    result.push((id.to_owned(), webview));
+                }
+            }
+        }
+    }
+    result
 }
 
 pub fn window_visible<R: Runtime>(app: &AppHandle<R>) -> bool {

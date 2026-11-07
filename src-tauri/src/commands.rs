@@ -348,6 +348,256 @@ pub async fn sample_file_inspect(
         .map_err(fail)
 }
 
+// ---------- Lưu PDF tự động ----------
+
+#[tauri::command]
+pub fn pdf_export_settings(
+    webview: Webview,
+    state: State<AppState>,
+) -> Res<crate::pdf_export::PdfExportSettings> {
+    trusted(&webview)?;
+    Ok(state.store.pdf_export_settings())
+}
+
+#[tauri::command]
+pub fn pdf_export_settings_set(
+    webview: Webview,
+    state: State<AppState>,
+    settings: crate::pdf_export::PdfExportSettings,
+) -> Res<crate::pdf_export::PdfExportSettings> {
+    trusted(&webview)?;
+    let normalized = crate::pdf_export::normalize_settings(settings).map_err(fail)?;
+    state
+        .store
+        .set_pdf_export_settings(&normalized)
+        .map_err(fail)?;
+    Ok(normalized)
+}
+
+#[tauri::command]
+pub async fn pdf_export_list_source(
+    webview: Webview,
+    state: State<'_, AppState>,
+) -> Res<Vec<sample_files::SampleFile>> {
+    trusted(&webview)?;
+    let Some(folder) = state.store.pdf_export_settings().source_folder else {
+        return Ok(Vec::new());
+    };
+    tokio::task::spawn_blocking(move || crate::pdf_export::list_source(&folder))
+        .await
+        .map_err(fail)?
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_convert(
+    webview: Webview,
+    state: State<'_, AppState>,
+    path: String,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = state.store.pdf_export_settings();
+    let roots = state.store.sample_search_roots();
+    tokio::task::spawn_blocking(move || {
+        crate::pdf_export::convert(&path, &file_name, &settings, &roots)
+    })
+    .await
+    .map_err(fail)?
+    .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_scan_erp_page(
+    webview: Webview,
+    app: AppHandle,
+) -> Res<crate::pdf_export::ErpPageSnapshot> {
+    trusted(&webview)?;
+    let views = workspace::erp_views(&app);
+    if views.is_empty() {
+        return Ok(crate::pdf_export::ErpPageSnapshot::default());
+    }
+    let mut fallback: Option<crate::pdf_export::ErpPageSnapshot> = None;
+    for (tab_id, view) in views {
+        let Ok(raw) = wv::eval_json(&view, crate::pdf_export::ERP_SCAN_SCRIPT).await else {
+            continue;
+        };
+        let Ok(mut snap) = serde_json::from_value::<crate::pdf_export::ErpPageSnapshot>(raw) else {
+            continue;
+        };
+        snap.tab_id = tab_id;
+        if !snap.attachments.is_empty() {
+            return Ok(snap);
+        }
+        if fallback.is_none() {
+            fallback = Some(snap);
+        }
+    }
+    Ok(fallback.unwrap_or_default())
+}
+
+fn expand_truncated_pdf_name(
+    requested_pdf_name: &str,
+    display_name: &str,
+    discovered_full_name: &str,
+) -> String {
+    let short_stem = crate::pdf_export::clean_attachment_stem(display_name);
+    let full_stem = crate::pdf_export::clean_attachment_stem(discovered_full_name);
+    if !short_stem.is_empty()
+        && full_stem.chars().count() > short_stem.chars().count()
+        && full_stem
+            .to_lowercase()
+            .starts_with(&short_stem.to_lowercase())
+        && requested_pdf_name.contains(&short_stem)
+    {
+        requested_pdf_name.replacen(&short_stem, &full_stem, 1)
+    } else {
+        requested_pdf_name.to_owned()
+    }
+}
+
+#[tauri::command]
+pub async fn pdf_export_convert_erp_attachment(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tab_id: String,
+    att_id: String,
+    display_name: String,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = state.store.pdf_export_settings();
+    if settings.output_folder.is_none() {
+        return Err("Chưa chọn thư mục lưu PDF. Anh bấm ⚙ Cài đặt ở mục Lưu PDF để chọn.".into());
+    }
+    let views = workspace::erp_views(&app);
+    let view = views
+        .iter()
+        .find(|(id, _)| !tab_id.is_empty() && id == &tab_id)
+        .or_else(|| views.first())
+        .map(|(_, v)| v.clone())
+        .ok_or("Chưa mở tab Arito ERP nào.")?;
+
+    let mut watch_folders = Vec::new();
+    if let Some(dl) = crate::pdf_export::default_downloads_folder() {
+        watch_folders.push(dl);
+    }
+    if let Some(src) = settings.source_folder.as_deref() {
+        let p = std::path::PathBuf::from(src);
+        if p.is_dir() && !watch_folders.contains(&p) {
+            watch_folders.push(p);
+        }
+    }
+
+    let start_ms = crate::pdf_export::now_ms() as u64;
+    let trigger_script = crate::pdf_export::erp_trigger_download_script(&att_id, &display_name);
+    let _ = wv::eval_json(&view, &trigger_script).await;
+
+    let roots = state.store.sample_search_roots();
+    for attempt in 0..40 {
+        sleep(300).await;
+        // 1. Check in-page JS hook capture (Blob / Fetch / XHR / <a download>)
+        if let Ok(raw) = wv::eval_json(&view, crate::pdf_export::ERP_POLL_CAPTURE_SCRIPT).await {
+            if !raw.is_null() {
+                if let Ok(cap) =
+                    serde_json::from_value::<crate::pdf_export::CapturedErpPayload>(raw)
+                {
+                    if let Ok(bytes) = crate::pdf_export::decode_base64_payload(&cap.base64) {
+                        if !bytes.is_empty() {
+                            let hint_name = if !cap.file_name.trim().is_empty() {
+                                cap.file_name.clone()
+                            } else {
+                                display_name.clone()
+                            };
+                            let final_pdf_name =
+                                expand_truncated_pdf_name(&file_name, &display_name, &hint_name);
+                            let settings_clone = settings.clone();
+                            let mime = cap.mime_type.clone();
+                            return tokio::task::spawn_blocking(move || {
+                                crate::pdf_export::convert_bytes(
+                                    &bytes,
+                                    &hint_name,
+                                    &mime,
+                                    &final_pdf_name,
+                                    &settings_clone,
+                                )
+                            })
+                            .await
+                            .map_err(fail)?
+                            .map_err(fail);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check Windows Downloads / source_folder for newly downloaded file (or prefix match after ~2.4s)
+        let folders_clone = watch_folders.clone();
+        let disp_clone = display_name.clone();
+        let allow_prefix = attempt >= 8;
+        let found = tokio::task::spawn_blocking(move || {
+            crate::pdf_export::find_downloaded_attachment(
+                &folders_clone,
+                start_ms,
+                &disp_clone,
+                allow_prefix,
+            )
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(downloaded_path) = found {
+            sleep(350).await;
+            let discovered_name = downloaded_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| display_name.clone());
+            let final_pdf_name =
+                expand_truncated_pdf_name(&file_name, &display_name, &discovered_name);
+            let path_str = downloaded_path.to_string_lossy().into_owned();
+            let settings_clone = settings.clone();
+            let roots_clone = roots.clone();
+            return tokio::task::spawn_blocking(move || {
+                crate::pdf_export::convert(&path_str, &final_pdf_name, &settings_clone, &roots_clone)
+            })
+            .await
+            .map_err(fail)?
+            .map_err(fail);
+        }
+    }
+
+    Err(format!(
+        "Chưa tải được tệp \"{}\" từ trang ERP. Anh có thể bấm trực tiếp vào tên tệp trên ERP để tải về máy rồi hệ thống sẽ tự chuyển sang PDF.",
+        display_name
+    ))
+}
+
+#[tauri::command]
+pub async fn app_update_check(webview: Webview) -> Res<crate::updater::AppUpdateInfo> {
+    trusted(&webview)?;
+    crate::updater::check_github_update().await.map_err(fail)
+}
+
+#[tauri::command]
+pub async fn app_update_install(
+    webview: Webview,
+    app: AppHandle,
+    download_url: String,
+) -> Res<String> {
+    trusted(&webview)?;
+    let path = crate::updater::download_and_launch_installer(&download_url)
+        .await
+        .map_err(fail)?;
+    // Close the running app after a brief delay so the NSIS installer can overwrite the exe cleanly.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        app.exit(0);
+    });
+    Ok(path)
+}
+
 #[tauri::command]
 pub fn workspace_dashboard(webview: Webview, app: AppHandle) -> Res<bool> {
     trusted(&webview)?;

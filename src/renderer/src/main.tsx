@@ -85,6 +85,21 @@ declare global {
         unavailableRoots: string[]
       }>
       inspectSampleFile(path: string): Promise<ErpFileInspection>
+      getPdfExportSettings(): Promise<import('./pdfExport').PdfExportSettings>
+      setPdfExportSettings(
+        settings: import('./pdfExport').PdfExportSettings,
+      ): Promise<import('./pdfExport').PdfExportSettings>
+      listPdfExportSource(): Promise<import('./erpFileTools').ErpSampleFile[]>
+      convertToPdf(path: string, fileName: string): Promise<import('./pdfExport').PdfExportResult>
+      scanErpPageAttachments(): Promise<import('./pdfExport').ErpPageSnapshot>
+      convertErpAttachmentToPdf(
+        tabId: string,
+        attId: string,
+        displayName: string,
+        fileName: string,
+      ): Promise<import('./pdfExport').PdfExportResult>
+      checkAppUpdate(): Promise<import('./AppUpdateCard').AppUpdateInfo>
+      installAppUpdate(downloadUrl: string): Promise<string>
       webTab(id: string, address: string, close?: boolean): Promise<void>
       setTasksWorkspace(open: boolean): Promise<void>
       listTasks(): Promise<import('./WorkTasks').WorkTask[]>

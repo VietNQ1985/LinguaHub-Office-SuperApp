@@ -11,6 +11,7 @@ mod local_open;
 mod models;
 mod notify;
 mod office_memory;
+mod pdf_export;
 mod providers;
 mod sample_files;
 mod secrets;
@@ -18,6 +19,7 @@ mod state;
 mod stt;
 mod task_reminders;
 mod tray_badge;
+mod updater;
 mod urls;
 mod workspace;
 mod wv;
@@ -211,6 +213,14 @@ pub fn run() {
             commands::sample_search_template_set,
             commands::sample_files_search,
             commands::sample_file_inspect,
+            commands::pdf_export_settings,
+            commands::pdf_export_settings_set,
+            commands::pdf_export_list_source,
+            commands::pdf_export_convert,
+            commands::pdf_export_scan_erp_page,
+            commands::pdf_export_convert_erp_attachment,
+            commands::app_update_check,
+            commands::app_update_install,
             commands::workspace_dashboard,
             commands::workspace_external,
             commands::workspace_reload,

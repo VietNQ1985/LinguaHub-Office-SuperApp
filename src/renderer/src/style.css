@@ -696,3 +696,31 @@ span.ai-trust-pill { cursor: default; }
   .ai-trust-bar { padding: 6px 10px; }
   .ai-focus-tab, .settings-cat-tab, .erp-tool-tab { padding: 5px 7px; font-size: 11.5px; }
 }
+
+/* Lưu PDF tự động */
+.pdf-export-card { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
+.pdf-export-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.pdf-export-head h4 { margin: 0 0 4px; font-size: 14px; }
+.pdf-export-head p { margin: 0; }
+.pdf-settings-form { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--soft); }
+.pdf-settings-form.compact { background: transparent; padding: 0; }
+.pdf-settings-form input[type="text"] { width: 100%; }
+.pdf-folder-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pdf-folder-row > div:first-child { display: grid; min-width: 0; }
+.pdf-folder-row small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-folder-actions { display: flex; gap: 6px; align-items: center; }
+.pdf-token-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pdf-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.pdf-export-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pdf-source-box { display: grid; gap: 8px; padding: 10px; border-radius: 12px; border: 1px dashed var(--border); }
+.pdf-source-head { display: flex; justify-content: space-between; align-items: center; }
+.pdf-source-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
+.pdf-source-list label { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.pdf-source-list span, .pdf-export-log span { display: grid; min-width: 0; word-break: break-word; }
+.pdf-source-list small, .pdf-export-log small { color: var(--muted); }
+.pdf-export-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 240px; overflow-y: auto; }
+.pdf-export-log li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: var(--soft); font-size: 13px; }
+.pdf-export-log li.fail { outline: 1px solid #f0b4b4; }
+.pdf-erp-att-item { display: grid; gap: 6px; padding: 8px; border-radius: 10px; background: var(--soft); }
+.pdf-erp-att-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pdf-custom-name-input { width: 100%; font-size: 12px; padding: 4px 8px; }
