@@ -8,6 +8,7 @@ mod commands;
 mod db;
 mod dialog;
 mod erp_bookmarklets;
+mod erp_credentials;
 mod local_open;
 mod models;
 mod notify;
@@ -216,6 +217,12 @@ pub fn run() {
             commands::sample_file_inspect,
             commands::pdf_export_settings,
             commands::pdf_export_settings_set,
+            commands::pdf_export_signing_certificates,
+            commands::pdf_export_create_signing_certificate,
+            commands::erp_credential_status,
+            commands::erp_credential_save,
+            commands::erp_credential_delete,
+            commands::erp_credential_fill,
             commands::pdf_export_list_source,
             commands::pdf_export_convert,
             commands::pdf_export_scan_erp_page,

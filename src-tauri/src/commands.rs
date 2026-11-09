@@ -351,12 +351,36 @@ pub async fn sample_file_inspect(
 // ---------- Lưu PDF tự động ----------
 
 #[tauri::command]
-pub fn pdf_export_settings(
+pub async fn pdf_export_settings(
     webview: Webview,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Res<crate::pdf_export::PdfExportSettings> {
     trusted(&webview)?;
-    Ok(state.store.pdf_export_settings())
+    ensure_pdf_export_signing_settings(&state).await
+}
+
+async fn ensure_pdf_export_signing_settings(
+    state: &AppState,
+) -> Res<crate::pdf_export::PdfExportSettings> {
+    let previous = state.store.pdf_export_settings();
+    #[cfg(windows)]
+    let settings = tokio::task::spawn_blocking({
+        let previous = previous.clone();
+        move || crate::pdf_export::resolve_pdf_signing_settings(previous)
+    })
+    .await
+    .map_err(fail)?
+    .map_err(fail)?;
+    #[cfg(not(windows))]
+    let settings = previous.clone();
+
+    if settings != previous {
+        state
+            .store
+            .set_pdf_export_settings(&settings)
+            .map_err(fail)?;
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -372,6 +396,103 @@ pub fn pdf_export_settings_set(
         .set_pdf_export_settings(&normalized)
         .map_err(fail)?;
     Ok(normalized)
+}
+
+#[tauri::command]
+pub async fn pdf_export_signing_certificates(
+    webview: Webview,
+) -> Res<Vec<crate::pdf_export::WindowsPdfSigningCertificate>> {
+    trusted(&webview)?;
+    tokio::task::spawn_blocking(crate::pdf_export::list_windows_pdf_signing_certificates)
+        .await
+        .map_err(fail)?
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_create_signing_certificate(
+    webview: Webview,
+) -> Res<crate::pdf_export::WindowsPdfSigningCertificate> {
+    trusted(&webview)?;
+    tokio::task::spawn_blocking(crate::pdf_export::create_windows_pdf_signing_certificate)
+        .await
+        .map_err(fail)?
+        .map_err(fail)
+}
+
+fn erp_tab_origin(app: &AppHandle, tab_id: &str) -> Res<(Webview, String)> {
+    if tab_id.len() > 128
+        || !tab_id.starts_with("web-")
+        || !tab_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err("Tab ERP không hợp lệ.".into());
+    }
+    let view = app
+        .get_webview(&crate::state::view_label(tab_id))
+        .ok_or("Tab ERP này không còn mở.")?;
+    let url = view.url().map_err(fail)?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("Chỉ lưu mật khẩu cho tab ERP HTTPS.".into());
+    }
+    let origin = url.origin().ascii_serialization();
+    if origin == "null" {
+        return Err("Không xác định được địa chỉ gốc của tab ERP.".into());
+    }
+    Ok((view, origin))
+}
+
+#[tauri::command]
+pub fn erp_credential_status(
+    webview: Webview,
+    app: AppHandle,
+    tab_id: String,
+) -> Res<crate::erp_credentials::ErpCredentialStatus> {
+    trusted(&webview)?;
+    let (_, origin) = erp_tab_origin(&app, &tab_id)?;
+    crate::erp_credentials::status(&origin)
+}
+
+#[tauri::command]
+pub fn erp_credential_save(
+    webview: Webview,
+    app: AppHandle,
+    tab_id: String,
+    username: String,
+    password: String,
+) -> Res<crate::erp_credentials::ErpCredentialStatus> {
+    trusted(&webview)?;
+    let (_, origin) = erp_tab_origin(&app, &tab_id)?;
+    crate::erp_credentials::save(&origin, username, password)
+}
+
+#[tauri::command]
+pub fn erp_credential_delete(webview: Webview, app: AppHandle, tab_id: String) -> Res<()> {
+    trusted(&webview)?;
+    let (_, origin) = erp_tab_origin(&app, &tab_id)?;
+    crate::erp_credentials::delete(&origin)
+}
+
+#[tauri::command]
+pub async fn erp_credential_fill(webview: Webview, app: AppHandle, tab_id: String) -> Res<Value> {
+    trusted(&webview)?;
+    let (tab, origin) = erp_tab_origin(&app, &tab_id)?;
+    let saved = crate::erp_credentials::get_for_fill(&origin)?
+        .ok_or("Chưa có mật khẩu được lưu cho website của tab này.")?;
+    let script = crate::erp_credentials::fill_script(&saved)?;
+    let result = wv::eval_json(&tab, &script).await.map_err(fail)?;
+    if result["ok"].as_bool() != Some(true) {
+        return Err("Không tìm thấy ô mật khẩu trong trang đang mở.".into());
+    }
+    Ok(json!({
+        "origin": origin,
+        "usernameFilled": result["usernameFilled"].as_bool().unwrap_or(false),
+    }))
 }
 
 #[tauri::command]
@@ -397,7 +518,7 @@ pub async fn pdf_export_convert(
     file_name: String,
 ) -> Res<crate::pdf_export::PdfExportResult> {
     trusted(&webview)?;
-    let settings = state.store.pdf_export_settings();
+    let settings = ensure_pdf_export_signing_settings(&state).await?;
     let roots = state.store.sample_search_roots();
     tokio::task::spawn_blocking(move || {
         crate::pdf_export::convert(&path, &file_name, &settings, &roots)
@@ -469,7 +590,9 @@ pub async fn pdf_export_scan_erp_page(
             fallback = Some(snap);
         }
     }
-    Ok(fallback.unwrap_or_default())
+    fallback.ok_or_else(|| {
+        "Không quét được trang ERP. Anh chờ phiếu mở xong rồi bấm quét lại.".into()
+    })
 }
 
 fn expand_truncated_pdf_name(
@@ -501,9 +624,10 @@ pub async fn pdf_export_convert_erp_attachment(
     att_id: String,
     display_name: String,
     file_name: String,
+    href: Option<String>,
 ) -> Res<crate::pdf_export::PdfExportResult> {
     trusted(&webview)?;
-    let settings = state.store.pdf_export_settings();
+    let settings = ensure_pdf_export_signing_settings(&state).await?;
     if settings.output_folder.is_none() {
         return Err("Chưa chọn thư mục lưu PDF. Anh bấm ⚙ Cài đặt ở mục Lưu PDF để chọn.".into());
     }
@@ -515,27 +639,61 @@ pub async fn pdf_export_convert_erp_attachment(
         .map(|(_, v)| v.clone())
         .ok_or("Chưa mở tab Arito ERP nào.")?;
 
-    let mut watch_folders = Vec::new();
-    if let Some(dl) = crate::pdf_export::default_downloads_folder() {
-        watch_folders.push(dl);
-    }
-    if let Some(src) = settings.source_folder.as_deref() {
-        let p = std::path::PathBuf::from(src);
-        if p.is_dir() && !watch_folders.contains(&p) {
-            watch_folders.push(p);
-        }
+    // Re-scan live DOM so a stale attachment URL (for example href="#", which
+    // resolves to the ERP form itself) cannot be mistaken for the file.
+    let live_snapshot = wv::eval_json(&view, crate::pdf_export::ERP_SCAN_SCRIPT)
+        .await
+        .ok();
+    let live_attachment = live_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot["attachments"].as_array())
+        .and_then(|attachments| {
+            attachments
+                .iter()
+                .find(|attachment| attachment["id"].as_str() == Some(att_id.as_str()))
+                .or_else(|| {
+                    attachments.iter().find(|attachment| {
+                        attachment["displayName"].as_str() == Some(display_name.as_str())
+                            || attachment["fullName"].as_str() == Some(display_name.as_str())
+                    })
+                })
+        });
+    let live_href = live_attachment
+        .and_then(|attachment| attachment["href"].as_str())
+        .map(ToOwned::to_owned);
+    let effective_href = if live_attachment.is_some() {
+        live_href
+    } else {
+        href
+    };
+    let trigger_script = crate::pdf_export::erp_trigger_download_script(
+        &att_id,
+        &display_name,
+        effective_href.as_deref(),
+    );
+    let trigger_result = wv::eval_json(&view, &trigger_script).await.map_err(fail)?;
+    if trigger_result["clicked"] != true {
+        let reason = trigger_result["reason"]
+            .as_str()
+            .unwrap_or("Không tìm thấy nút tải tệp trên phiếu ERP.");
+        return Err(reason.to_owned().into());
     }
 
-    let start_ms = crate::pdf_export::now_ms() as u64;
-    let trigger_script = crate::pdf_export::erp_trigger_download_script(&att_id, &display_name);
-    let _ = wv::eval_json(&view, &trigger_script).await;
-
-    let roots = state.store.sample_search_roots();
-    for attempt in 0..40 {
-        sleep(300).await;
-        // 1. Check in-page JS hook capture (Blob / Fetch / XHR / <a download>)
+    let mut capture_error = None;
+    let mut capture_diagnostics: Option<Value> = None;
+    for _attempt in 0..100 {
+        sleep(120).await;
+        // Read captured bytes from the page's Blob buffer; the source attachment is
+        // never written to Downloads or another local folder.
         if let Ok(raw) = wv::eval_json(&view, crate::pdf_export::ERP_POLL_CAPTURE_SCRIPT).await {
             if !raw.is_null() {
+                if raw["diagnostics"].is_array() {
+                    capture_diagnostics = Some(raw["diagnostics"].clone());
+                }
+                if let Some(error) = raw["captureError"].as_str() {
+                    capture_error = Some(error.to_owned());
+                    continue;
+                }
                 if let Ok(cap) =
                     serde_json::from_value::<crate::pdf_export::CapturedErpPayload>(raw)
                 {
@@ -567,45 +725,46 @@ pub async fn pdf_export_convert_erp_attachment(
                 }
             }
         }
-
-        // 2. Check Windows Downloads / source_folder for newly downloaded file (or prefix match after ~2.4s)
-        let folders_clone = watch_folders.clone();
-        let disp_clone = display_name.clone();
-        let allow_prefix = attempt >= 8;
-        let found = tokio::task::spawn_blocking(move || {
-            crate::pdf_export::find_downloaded_attachment(
-                &folders_clone,
-                start_ms,
-                &disp_clone,
-                allow_prefix,
-            )
-        })
-        .await
-        .ok()
-        .flatten();
-
-        if let Some(downloaded_path) = found {
-            sleep(350).await;
-            let discovered_name = downloaded_path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| display_name.clone());
-            let final_pdf_name =
-                expand_truncated_pdf_name(&file_name, &display_name, &discovered_name);
-            let path_str = downloaded_path.to_string_lossy().into_owned();
-            let settings_clone = settings.clone();
-            let roots_clone = roots.clone();
-            return tokio::task::spawn_blocking(move || {
-                crate::pdf_export::convert(&path_str, &final_pdf_name, &settings_clone, &roots_clone)
-            })
-            .await
-            .map_err(fail)?
-            .map_err(fail);
-        }
     }
 
+    let details = capture_error
+        .map(|error| format!(" Chi tiết: {error}"))
+        .unwrap_or_default();
+    let diagnostic_summary = capture_diagnostics
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|frames| {
+            frames
+                .iter()
+                .map(|frame| {
+                    let trigger = &frame["trigger"];
+                    format!(
+                        "frame {} hook={} active={} blobs={} href={} open={} open-fetch={} fetch={} read={} http={} type={} bytes={}",
+                        frame["frameIndex"].as_u64().unwrap_or(0),
+                        frame["hookInstalled"].as_bool().unwrap_or(false),
+                        frame["captureActive"].as_bool().unwrap_or(false),
+                        frame["blobCount"].as_u64().unwrap_or(0),
+                        trigger["hrefProtocol"].as_str().unwrap_or("n/a"),
+                        trigger["openPath"].as_str().unwrap_or("n/a"),
+                        trigger["openFetchState"].as_str().unwrap_or("n/a"),
+                        trigger["fetchState"].as_str().unwrap_or("n/a"),
+                        trigger["readState"].as_str().unwrap_or("n/a"),
+                        trigger["httpStatus"].as_u64().unwrap_or(0),
+                        trigger["mimeType"].as_str().unwrap_or("n/a"),
+                        trigger["byteLength"].as_u64().unwrap_or(0),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_default();
+    let diagnostic_details = if diagnostic_summary.is_empty() {
+        String::new()
+    } else {
+        format!(" Chẩn đoán Blob: {diagnostic_summary}.")
+    };
     Err(format!(
-        "Chưa tải được tệp \"{}\" từ trang ERP. Anh có thể bấm trực tiếp vào tên tệp trên ERP để tải về máy rồi hệ thống sẽ tự chuyển sang PDF.",
+        "Không đọc được nội dung tệp \"{}\" từ Blob của trang ERP. Hệ thống không tải tệp nguồn xuống máy.{details}{diagnostic_details}",
         display_name
     ))
 }

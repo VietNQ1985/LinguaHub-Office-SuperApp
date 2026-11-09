@@ -69,7 +69,7 @@ export function AppUpdateCard() {
       </p>
       <div className="pdf-folder-row">
         <div>
-          <strong>Phiên bản hiện tại: v{info?.currentVersion || '0.4.2'}</strong>
+          <strong>Phiên bản hiện tại: v{info?.currentVersion || '0.4.7'}</strong>
           <small>
             {info?.updateAvailable
               ? `Bản mới nhất trên GitHub: v${info.latestVersion} (${info.assetName || 'setup.exe'}${

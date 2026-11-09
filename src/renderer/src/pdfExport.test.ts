@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cleanErpAttachmentName,
   cleanTemplateString,
+  dedupeErpPageAttachments,
   detectSampleId,
   fileFingerprint,
   isPdfConvertible,
@@ -50,6 +52,41 @@ describe('pdfExport helpers', () => {
   it('detects sample IDs inside file names', () => {
     expect(detectSampleId('1. 06.11.2026-PYC 261106.037 TENTAMUS.pdf')).toBe('261106.037')
     expect(detectSampleId('khong co ma.pdf')).toBe('')
+  })
+
+  it('cleans ERP action labels and file-size badges from attachment names', () => {
+    expect(cleanErpAttachmentName('[Chọn files CS] 1. 261107.02 FORM PYC Ếch.xlsx (38.00 KB)×CancelDoneDownload×'))
+      .toBe('261107.02 FORM PYC Ếch.xlsx')
+    expect(cleanErpAttachmentName('1. 06.11.2026-PYC TENTAMUS.pdf (312.00 KB)✖CancelDoneDownload✖'))
+      .toBe('06.11.2026-PYC TENTAMUS.pdf')
+  })
+
+  it('collapses duplicate ERP DOM nodes but preserves different links with the same name', () => {
+    const base = {
+      fieldLabel: 'Chọn files CS',
+      displayName: '[Chọn files CS] 1. PYC Ếch.xlsx (38.00 KB)×CancelDoneDownload×',
+      fullName: 'PYC Ếch.xlsx',
+      href: null as string | null,
+    }
+    const duplicate = {
+      ...base,
+      id: 'nested-file-chip',
+      displayName: '1. PYC Ếch.xlsx (38.00 KB)',
+      href: 'https://erp.example/file/one',
+    }
+    const deduped = dedupeErpPageAttachments([
+      { ...base, id: 'broad-wrapper' },
+      duplicate,
+      { ...duplicate, id: 'same-link', displayName: 'PYC Ếch.xlsx' },
+      { ...duplicate, id: 'other-version', href: 'https://erp.example/file/two' },
+    ])
+
+    expect(deduped).toHaveLength(2)
+    expect(deduped[0]).toMatchObject({ id: 'nested-file-chip', displayName: 'PYC Ếch.xlsx' })
+    expect(deduped.map(item => item.href)).toEqual([
+      'https://erp.example/file/one',
+      'https://erp.example/file/two',
+    ])
   })
 
   it('only accepts formats the backend can convert', () => {

@@ -650,7 +650,8 @@ span.ai-trust-pill { cursor: default; }
 
 /* ERP File Processing & Re-learning Panel */
 .erp-panel-header { display: grid; gap: 8px; margin-bottom: 4px; }
-.erp-panel-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.erp-panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.erp-panel-title-row h2 { margin: 0; font-size: 16px; }
 .erp-panel-top-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .erp-panel-top-actions button { padding: 6px 10px; font-size: 12px; border-radius: 9px; }
 .erp-panel-header .ai-trust-bar { padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border); }
@@ -705,6 +706,7 @@ span.ai-trust-pill { cursor: default; }
 .pdf-settings-form { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: var(--soft); }
 .pdf-settings-form.compact { background: transparent; padding: 0; }
 .pdf-settings-form input[type="text"] { width: 100%; }
+.pdf-settings-form select { width: 100%; }
 .pdf-folder-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .pdf-folder-row > div:first-child { display: grid; min-width: 0; }
 .pdf-folder-row small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -724,3 +726,49 @@ span.ai-trust-pill { cursor: default; }
 .pdf-erp-att-item { display: grid; gap: 6px; padding: 8px; border-radius: 10px; background: var(--soft); }
 .pdf-erp-att-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .pdf-custom-name-input { width: 100%; font-size: 12px; padding: 4px 8px; }
+.pdf-erp-att-top > label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: 7px; row-gap: 2px; min-width: 0; }
+.pdf-erp-att-top > label input { grid-row: 1 / span 3; }
+.pdf-erp-att-top > label strong, .pdf-erp-att-top > label small { min-width: 0; overflow-wrap: anywhere; }
+.pdf-erp-field-label { color: var(--muted); font-size: 10px; }
+.pdf-erp-att-top > button.secondary-button { flex: 0 0 36px; min-width: 36px; padding-inline: 5px; }
+
+/* Compact ERP feature switcher; the selected tool stays visible while its panel scrolls. */
+.erp-panel-nav { position: sticky; top: 0; z-index: 8; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; padding: 6px 0; background: var(--bg); }
+.erp-panel-nav-tab { display: flex; min-width: 0; min-height: 38px; align-items: center; justify-content: center; gap: 5px; padding: 6px 7px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--surface); font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.erp-panel-nav-tab > span { flex: 0 0 auto; }
+.erp-panel-nav-tab.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: inset 0 -2px 0 var(--accent); }
+.erp-tools-workbench > .erp-tool-tabs { position: sticky; top: 49px; z-index: 7; margin-bottom: 0; background: var(--bg); }
+.erp-panel-settings { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.erp-panel-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.erp-panel-settings-head h3 { margin: 0; font-size: 14px; }
+.erp-password-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.erp-password-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.erp-password-card-head h4 { margin: 0; font-size: 14px; }
+.erp-password-state { padding: 3px 8px; border-radius: 999px; color: var(--muted); background: var(--surface-muted, #f1f5f9); font-size: 11px; }
+.erp-password-state.saved { color: #047857; background: #d1fae5; }
+.erp-password-origin { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.erp-password-card input[type="text"], .erp-password-card input[type="password"] { width: 100%; min-width: 0; }
+.erp-password-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.erp-password-notice { overflow-wrap: anywhere; }
+.erp-password-save-offer { position: sticky; top: 0; z-index: 3; display: grid; gap: 8px; margin: 8px 10px; padding: 12px; border: 1px solid var(--accent, #2563eb); border-radius: 12px; background: var(--surface); box-shadow: 0 8px 24px rgba(15, 23, 42, .12); }
+.erp-password-save-offer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.erp-password-save-offer-head strong { font-size: 14px; }
+.erp-password-save-offer input { width: 100%; min-width: 0; }
+.pdf-export-progress { display: grid; gap: 7px; margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted, #f8fafc); }
+.pdf-export-progress-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.pdf-export-progress-label span, .pdf-export-progress small { color: var(--muted); }
+.pdf-export-progress small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-export-progress-track { position: relative; height: 8px; overflow: hidden; border-radius: 999px; background: var(--border); }
+.pdf-export-progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--accent, #2563eb); transition: width 180ms ease; }
+.pdf-export-progress-sweep { position: absolute; inset: 0 auto 0 -35%; width: 35%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.68), transparent); animation: pdf-progress-sweep 1.15s linear infinite; }
+@keyframes pdf-progress-sweep { to { transform: translateX(390%); } }
+@media (prefers-reduced-motion: reduce) { .pdf-export-progress-fill { transition: none; } .pdf-export-progress-sweep { animation: none; inset: 0; width: 100%; opacity: .2; } }
+.pdf-export-log-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.erp-bookmarklet-version { display: block; margin-top: 9px; color: var(--muted); font-size: 10.5px; }
+.pdf-export-head { align-items: center; }
+.pdf-export-card { margin-top: 0; }
+
+@media (max-width: 520px) {
+  .erp-panel-nav { gap: 3px; }
+  .erp-panel-nav-tab { gap: 3px; padding-inline: 4px; font-size: 10.5px; }
+}

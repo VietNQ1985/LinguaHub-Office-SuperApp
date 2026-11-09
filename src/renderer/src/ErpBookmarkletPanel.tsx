@@ -29,13 +29,11 @@ export function ErpBookmarkletPanel() {
   }
   return <section className="settings-erp-box" aria-label="Đối chiếu M1A và M7K">
     <h3>Đối chiếu M1A · M7K</h3>
-    <p className="helper-text">Mở phiếu hoặc grid tương ứng trong tab ERP đang xem, rồi chọn công cụ. Lõi bookmarklet v3.0.49 · © Nguyễn Quốc Việt.</p>
     <div className="settings-actions">
-      <button type="button" disabled={busy} onClick={() => void launch('m1a')}>Đối chiếu M1A</button>
-      <button type="button" disabled={busy} onClick={() => void launch('m7k')}>Dashboard M7K / ĐKKN</button>
+      <button type="button" disabled={busy} onClick={() => void launch('m1a')} title="Đối chiếu Cont, Xe, Mooc, Seal và hồ sơ liên kết trên phiếu ERP">Đối chiếu M1A</button>
+      <button type="button" disabled={busy} onClick={() => void launch('m7k')} title="Quét grid mẫu và OCR tuần tự; nhập Số ĐKKN trong cửa sổ công cụ">Dashboard M7K / ĐKKN</button>
     </div>
-    <p className="helper-text">M1A đối chiếu Cont/Xe/Mooc/Seal và hồ sơ liên kết. M7K/ĐKKN quét các mẫu trên grid đang tải và OCR tuần tự; nhập Số ĐKKN trong popup. Công cụ chỉ đọc và mở VIEW, không lưu hoặc sửa phiếu.</p>
-    <p className="helper-text">OCR gửi ảnh được chọn đến Gemini/Google Vision khi anh chạy trong popup. Cấu hình key/model của bookmarklet được lưu riêng theo trang ERP; không lấy key AI của Office.</p>
+    <small className="erp-bookmarklet-version" title="Công cụ chỉ đọc dữ liệu ERP; OCR dùng cấu hình riêng của bookmarklet.">v3.0.49 · © Nguyễn Quốc Việt</small>
     {message && <p role="status">{message}</p>}
   </section>
 }

@@ -8,17 +8,19 @@ use crate::wv;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(windows)]
 use tauri::webview::WebviewWindowBuilder;
-use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
+use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, Webview, WebviewUrl,
 };
 #[cfg(windows)]
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
+use zeroize::Zeroize;
 
 pub const HEADER: f64 = 64.0;
 /// The ERP child-tab strip rendered directly below the main navigation.
@@ -40,6 +42,7 @@ struct PopupSlotState {
     requested_url: Mutex<Option<String>>,
     claimed: AtomicBool,
     adoption_started: AtomicBool,
+    download_started: AtomicBool,
 }
 
 #[cfg(windows)]
@@ -74,7 +77,7 @@ fn claim_popup(
                 .and_then(|value| value.host_str().map(str::to_owned))
                 .map(|host| format!("ERP · {host}"))
                 .unwrap_or_else(|| "Trang ERP mới".to_owned());
-            match open_web_tab(&app, &id, &address, false) {
+            match open_web_tab_with_options(&app, &id, &address, false, true) {
                 Ok(()) => {
                     let _ = app.emit_to(
                         "ui",
@@ -111,9 +114,39 @@ fn claim_popup(
     slot.state.claimed.store(true, Ordering::Release);
 
     queue_popup_slot(app.clone(), pool.clone(), source_label.to_owned());
-
     if url.as_str() == "about:blank" {
-        schedule_popup_adoption(app.clone(), slot.clone(), Duration::from_millis(300));
+        // WebView2 can surface the native host as soon as Create is returned, even though the
+        // host was built hidden. Hide it again while the opener assigns the real destination.
+        let hide_window = slot.window.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = hide_window.hide();
+        });
+
+        let cleanup_app = app.clone();
+        let cleanup_slot = slot.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if cleanup_slot.state.download_started.load(Ordering::Acquire)
+                || cleanup_app
+                    .state::<AppState>()
+                    .lock()
+                    .views
+                    .contains(&cleanup_slot.label)
+            {
+                return;
+            }
+            let Some(view) = cleanup_app.get_webview(&cleanup_slot.label) else {
+                return;
+            };
+            if view
+                .url()
+                .map(|current| current.as_str() == "about:blank")
+                .unwrap_or(false)
+            {
+                let _ = cleanup_slot.window.close();
+            }
+        });
     }
     NewWindowResponse::Create {
         window: slot.window,
@@ -132,6 +165,7 @@ fn prepare_popup_slot(
         requested_url: Mutex::new(None),
         claimed: AtomicBool::new(false),
         adoption_started: AtomicBool::new(false),
+        download_started: AtomicBool::new(false),
     });
 
     let navigation_app = app.clone();
@@ -147,15 +181,24 @@ fn prepare_popup_slot(
     let load_id = id.clone();
     let load_label = label.clone();
     let load_state = slot_state.clone();
+    let download_app = app.clone();
+    let download_label = label.clone();
+    let download_state = slot_state.clone();
     let window =
         WebviewWindowBuilder::new(&app, &label, WebviewUrl::External("about:blank".parse()?))
             .with_environment(environment.clone())
             .title("LinguaHub popup")
+            // WebView2 can surface a NewWindowResponse::Create host even when the Tauri
+            // window starts hidden. Keep this staging host tiny and off-screen until adoption.
+            .position(-32000.0, -32000.0)
+            .inner_size(1.0, 1.0)
             .visible(false)
             .skip_taskbar(true)
             .additional_browser_args(BROWSER_ARGS)
             .on_navigation(move |url| {
-                let allowed = url.as_str() == "about:blank" || url.scheme() == "blob" || popup_target_allowed(url);
+                let allowed = url.as_str() == "about:blank"
+                    || url.scheme() == "blob"
+                    || popup_target_allowed(url);
                 if allowed
                     && navigation_state.claimed.load(Ordering::Acquire)
                     && popup_target_allowed(url)
@@ -180,6 +223,35 @@ fn prepare_popup_slot(
                     );
                 }
             })
+            .on_download(move |_webview, event| {
+                match event {
+                    DownloadEvent::Requested { destination, .. } => {
+                        *destination = resolve_download_destination(&download_app, destination);
+                        download_state
+                            .download_started
+                            .store(true, Ordering::Release);
+                    }
+                    DownloadEvent::Finished { .. } => {
+                        if download_state
+                            .download_started
+                            .swap(false, Ordering::AcqRel)
+                        {
+                            let app = download_app.clone();
+                            let label = download_label.clone();
+                            tauri::async_runtime::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(350)).await;
+                                if !app.state::<AppState>().lock().views.contains(&label) {
+                                    if let Some(window) = app.get_webview_window(&label) {
+                                        let _ = window.close();
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                true
+            })
             .on_page_load(move |_, payload| {
                 if payload.event() != PageLoadEvent::Finished
                     || !load_state.claimed.load(Ordering::Acquire)
@@ -191,8 +263,7 @@ fn prepare_popup_slot(
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .clone();
-                let Some(requested) = requested else { return };
-                if requested == "about:blank" || payload.url().scheme() != "https" {
+                if requested.is_none() || !popup_load_ready(payload.url()) {
                     return;
                 }
                 let Some(window) = load_app.get_webview_window(&load_label) else {
@@ -268,14 +339,7 @@ fn schedule_popup_adoption(app: AppHandle, slot: PopupSlot, delay: Duration) {
             return;
         };
         let Ok(current_url) = view.url() else { return };
-        let requested = slot
-            .state
-            .requested_url
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-            .unwrap_or_default();
-        if !popup_load_ready(&requested, &current_url) {
+        if !popup_load_ready(&current_url) {
             slot.state.adoption_started.store(false, Ordering::Release);
             return;
         }
@@ -284,7 +348,9 @@ fn schedule_popup_adoption(app: AppHandle, slot: PopupSlot, delay: Duration) {
         };
         if let Err(error) = view.reparent(&main) {
             slot.state.adoption_started.store(false, Ordering::Release);
-            let _ = slot.window.show();
+            // Reparent failures used to expose the native host as an empty white popup.
+            // Close the host and report the error instead of displaying the blank window.
+            let _ = slot.window.close();
             let _ = app.emit_to("ui", "local-open-error", error.to_string());
             return;
         }
@@ -309,12 +375,46 @@ fn schedule_popup_adoption(app: AppHandle, slot: PopupSlot, delay: Duration) {
 }
 
 #[cfg(windows)]
-fn popup_load_ready(requested: &str, current: &url::Url) -> bool {
-    if requested == "about:blank" {
-        current.as_str() == "about:blank" || popup_target_allowed(current)
-    } else {
-        popup_target_allowed(current)
+fn popup_load_ready(current: &url::Url) -> bool {
+    popup_target_allowed(current)
+}
+
+fn resolve_download_destination(app: &AppHandle, requested: &Path) -> PathBuf {
+    let configured = app
+        .state::<AppState>()
+        .store
+        .pdf_export_settings()
+        .source_folder
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_dir());
+    let proposed = match (configured, requested.file_name()) {
+        (Some(folder), Some(name)) => folder.join(name),
+        _ => requested.to_path_buf(),
+    };
+    unique_download_destination(proposed)
+}
+
+fn unique_download_destination(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
     }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for index in 2..=9999 {
+        let file_name = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path
 }
 
 fn popup_target_allowed(url: &url::Url) -> bool {
@@ -367,27 +467,29 @@ mod popup_policy_tests {
 
     #[cfg(windows)]
     #[test]
-    fn popup_adoption_waits_for_the_requested_https_page_or_blank_document() {
+    fn popup_adoption_waits_for_an_https_page_and_never_adopts_blank() {
         use super::popup_load_ready;
 
         let blank = url::Url::parse("about:blank").unwrap();
         let page = url::Url::parse("https://id.arito.vn/app?id=appdrawer").unwrap();
         let credentials = url::Url::parse("https://user:secret@example.com/").unwrap();
-        assert!(!popup_load_ready(
-            "https://id.arito.vn/app?id=appdrawer",
-            &blank
-        ));
-        assert!(popup_load_ready(
-            "https://id.arito.vn/app?id=appdrawer",
-            &page
-        ));
-        assert!(popup_load_ready("about:blank", &blank));
-        assert!(popup_load_ready("about:blank", &page));
-        assert!(!popup_load_ready("about:blank", &credentials));
+        assert!(!popup_load_ready(&blank));
+        assert!(popup_load_ready(&page));
+        assert!(!popup_load_ready(&credentials));
     }
 }
 
 pub fn open_web_tab(app: &AppHandle, id: &str, address: &str, close: bool) -> anyhow::Result<()> {
+    open_web_tab_with_options(app, id, address, close, false)
+}
+
+fn open_web_tab_with_options(
+    app: &AppHandle,
+    id: &str,
+    address: &str,
+    close: bool,
+    close_after_download: bool,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         id.starts_with("web-")
             && id.len() <= 60
@@ -454,6 +556,7 @@ pub fn open_web_tab(app: &AppHandle, id: &str, address: &str, close: bool) -> an
         let popup_pool: PopupPool = Arc::new(Mutex::new(VecDeque::new()));
         let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
             .additional_browser_args(BROWSER_ARGS)
+            .initialization_script(include_str!("../page-scripts/erp-password-manager.js"))
             .on_navigation(move |url| {
                 if url.scheme() == "linguahub-local" && url.host_str() == Some("open") {
                     if let Some((_, path)) = url.query_pairs().find(|(key, _)| key == "path") {
@@ -478,6 +581,32 @@ pub fn open_web_tab(app: &AppHandle, id: &str, address: &str, close: bool) -> an
                 claim_popup(&popup_app, &popup_pool, &popup_source_label, url)
             })
         };
+        let download_app = app.clone();
+        let download_finish_app = app.clone();
+        let download_finish_id = id.to_owned();
+        let builder = builder.on_download(move |_webview, event| {
+            match event {
+                DownloadEvent::Requested { destination, .. } => {
+                    *destination = resolve_download_destination(&download_app, destination);
+                }
+                DownloadEvent::Finished { success, .. } => {
+                    if success && close_after_download {
+                        let app = download_finish_app.clone();
+                        let id = download_finish_id.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(350)).await;
+                            if let Err(error) = open_web_tab(&app, &id, "", true) {
+                                log::warn!(
+                                    "could not close temporary ERP download tab {id}: {error}"
+                                );
+                            }
+                        });
+                    }
+                }
+                _ => {}
+            }
+            true
+        });
         #[cfg(not(windows))]
         let builder = builder.on_new_window(|_url, _features| NewWindowResponse::Deny);
         let builder = builder.on_document_title_changed(move |_view, title| {
@@ -1076,8 +1205,29 @@ pub fn activate<R: Runtime>(app: &AppHandle<R>, service: &str) {
     let _ = app.emit_to("ui", "app-shortcut", service);
 }
 
-const POLL: &str =
-    "(()=>{const a=window.__lhAgent;if(!a)return null;a.observe(__OBSERVE__);return a.poll()})()";
+const POLL: &str = r#"(()=>{
+  const a=window.__lhAgent;
+  let r=a?(a.observe(__OBSERVE__),a.poll()):{};
+  if(!r||typeof r!=='object')r={};
+  try{
+    const k='__linguahub_erp_credential_proposal_v1';
+    const raw=sessionStorage.getItem(k);
+    if(raw){
+      sessionStorage.removeItem(k);
+      const c=JSON.parse(raw);
+      if(c&&c.origin===location.origin&&Date.now()-c.createdAt<60000&&typeof c.password==='string'&&c.password.length)r.erpCredentialProposal=c
+    }
+  }catch{}
+  if(__AUTOFILL__&&!r.erpCredentialProposal&&!window.__linguahubCredentialAutofillAttempted){
+    const visible=e=>!e.disabled&&!e.readOnly&&(e.offsetWidth||e.offsetHeight||e.getClientRects().length);
+    const p=Array.from(document.querySelectorAll('input[type="password"]')).find(visible);
+    if(p&&!p.value){
+      window.__linguahubCredentialAutofillAttempted=true;
+      r.erpCredentialAutofill=true
+    }
+  }
+  return Object.keys(r).length?r:null
+})()"#;
 
 /// Polls the page agents: the active tab often (chat changes, shortcuts), the others for unread badges.
 pub fn start_polling<R: Runtime>(app: AppHandle<R>) {
@@ -1104,19 +1254,81 @@ pub fn start_polling<R: Runtime>(app: AppHandle<R>) {
                 let Some(webview) = app.get_webview(&label) else {
                     continue;
                 };
-                let script = POLL.replace(
-                    "__OBSERVE__",
-                    if active && observe && window_visible(&app) {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                );
-                let Ok(result) = wv::eval_json(&webview, &script).await else {
+                let is_visible_active_tab = active && window_visible(&app);
+                let script = POLL
+                    .replace(
+                        "__OBSERVE__",
+                        if is_visible_active_tab && observe {
+                            "true"
+                        } else {
+                            "false"
+                        },
+                    )
+                    .replace(
+                        "__AUTOFILL__",
+                        if is_visible_active_tab {
+                            "true"
+                        } else {
+                            "false"
+                        },
+                    );
+                let Ok(mut result) = wv::eval_json(&webview, &script).await else {
                     continue;
                 };
                 if result.is_null() {
                     continue;
+                }
+                if service.starts_with("web-") {
+                    if result["erpCredentialAutofill"].as_bool() == Some(true) {
+                        let page_origin = webview
+                            .url()
+                            .ok()
+                            .filter(|url| url.scheme() == "https")
+                            .map(|url| url.origin().ascii_serialization());
+                        if let Some(origin) = page_origin {
+                            if let Ok(Some(credential)) =
+                                crate::erp_credentials::get_for_fill(&origin)
+                            {
+                                if let Ok(script) = crate::erp_credentials::fill_script(&credential)
+                                {
+                                    let _ = wv::eval_json(&webview, &script).await;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(proposal) = result.get("erpCredentialProposal") {
+                        let page_origin = webview
+                            .url()
+                            .ok()
+                            .filter(|url| url.scheme() == "https")
+                            .map(|url| url.origin().ascii_serialization());
+                        let origin = proposal["origin"].as_str();
+                        let username = proposal["username"].as_str().unwrap_or_default();
+                        let password = proposal["password"].as_str().unwrap_or_default();
+                        if page_origin.as_deref().is_some()
+                            && origin == page_origin.as_deref()
+                            && !username.contains('\0')
+                            && username.len() <= 1024
+                            && !password.is_empty()
+                            && password.len() <= 2560
+                        {
+                            let _ = app.emit_to(
+                                "ui",
+                                "erp-credential-proposal",
+                                json!({
+                                    "tabId": service,
+                                    "origin": origin,
+                                    "username": username,
+                                    "password": password,
+                                }),
+                            );
+                        }
+                        if let serde_json::Value::String(secret) =
+                            &mut result["erpCredentialProposal"]["password"]
+                        {
+                            secret.zeroize();
+                        }
+                    }
                 }
                 if let Some(shortcut) = result["shortcut"].as_str() {
                     let _ = app.emit_to("ui", "app-shortcut", shortcut);

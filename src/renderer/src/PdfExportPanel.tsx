@@ -4,6 +4,7 @@ import {
   PDF_SETTINGS_EVENT,
   PDF_TEMPLATE_TOKENS,
   cleanTemplateString,
+  dedupeErpPageAttachments,
   defaultPdfSettings,
   detectSampleId,
   erpAttachmentFingerprint,
@@ -17,7 +18,9 @@ import {
   type ErpPageAttachment,
   type ErpPageSnapshot,
   type PdfExportResult,
+  type PdfSignatureAppearance,
   type PdfExportSettings,
+  type WindowsPdfSigningCertificate,
 } from './pdfExport'
 
 const POLL_MS = 3500
@@ -35,6 +38,15 @@ function errorText(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string' && error) return error
   return fallback
+}
+
+function parentFolder(path: string): string {
+  const clean = path.replace(/[\\/]+$/, '')
+  const separator = Math.max(clean.lastIndexOf('\\'), clean.lastIndexOf('/'))
+  if (separator < 0) return '.'
+  if (separator === 0) return clean.slice(0, 1) || '/'
+  if (separator === 2 && clean[1] === ':') return clean.slice(0, 3)
+  return clean.slice(0, separator)
 }
 
 /** Shared hook: loads and saves PDF export settings, keeps every mounted copy in sync. */
@@ -84,15 +96,69 @@ function usePdfSettings() {
 
 /** Folder pickers + rename template. Rendered in the ERP panel and in the Settings Center. */
 export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }) {
-  const { settings, setSettings, save } = usePdfSettings()
+  const { settings, setSettings, save, loaded } = usePdfSettings()
   const [notice, setNotice] = useState('')
-
+  const [certificates, setCertificates] = useState<WindowsPdfSigningCertificate[]>([])
+  const pdfSigningCertificates = certificates.filter(cert => cert.pdfSigningCapable !== false)
+  const [loadingCertificates, setLoadingCertificates] = useState(false)
+  const [creatingCertificate, setCreatingCertificate] = useState(false)
   const update = async (patch: Partial<PdfExportSettings>, message: string) => {
     try {
       await save({ ...settings, ...patch })
       setNotice(message)
     } catch (error) {
       setNotice(errorText(error, 'Không lưu được cài đặt Lưu PDF.'))
+    }
+  }
+
+  const loadSigningCertificates = useCallback(async () => {
+    setLoadingCertificates(true)
+    try {
+      const available = await window.lingua.listPdfSigningCertificates()
+      setCertificates(available)
+      const suitableCount = available.filter(certificate => certificate.pdfSigningCapable !== false).length
+      setNotice(
+        suitableCount
+          ? `Đã tìm thấy ${suitableCount} chứng thư ký PDF.`
+          : 'Không tìm thấy chứng thư Windows phù hợp để ký PDF.',
+      )
+    } catch (error) {
+      setNotice(errorText(error, 'Không đọc được chứng thư Windows.'))
+    } finally {
+      setLoadingCertificates(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadSigningCertificates()
+    const onFocus = () => void loadSigningCertificates()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadSigningCertificates])
+
+  const createSigningCertificate = async () => {
+    setCreatingCertificate(true)
+    try {
+      const created = await window.lingua.createPdfSigningCertificate()
+      const available = await window.lingua.listPdfSigningCertificates()
+      setCertificates(available)
+      if (
+        created.pdfSigningCapable === false ||
+        !available.some(
+          certificate =>
+            certificate.thumbprint === created.thumbprint && certificate.pdfSigningCapable !== false,
+        )
+      ) {
+        throw new Error('Chứng thư đã tạo nhưng Windows chưa trả về khóa riêng để ký.')
+      }
+      await update(
+        { certificateThumbprint: created.thumbprint },
+        'Đã chọn chứng thư Windows cho tài khoản này.',
+      )
+    } catch (error) {
+      setNotice(errorText(error, 'Không tạo được chứng thư Windows.'))
+    } finally {
+      setCreatingCertificate(false)
     }
   }
 
@@ -121,6 +187,9 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
     originalName: '1. 06.11.2026-PYC TENTAMUS - DP...',
     index: 1,
   })
+  const signatureAppearanceSelectId = compact
+    ? 'pdf-signature-appearance-compact'
+    : 'pdf-signature-appearance'
 
   return (
     <div className={compact ? 'pdf-settings-form compact' : 'pdf-settings-form'}>
@@ -155,6 +224,103 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
           )}
         </div>
       </div>
+
+      <div className="pdf-folder-row">
+        <div>
+          <strong>Ký số Windows</strong>
+          <small title="Dùng chứng thư trong Windows; khóa riêng không được xuất khỏi máy.">
+            {settings.certificateThumbprint
+              ? pdfSigningCertificates.find(cert => cert.thumbprint === settings.certificateThumbprint)?.subject || 'Cần chọn lại chứng thư ký PDF'
+              : 'Chưa chọn chứng thư'}
+          </small>
+        </div>
+        <div className="pdf-folder-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void loadSigningCertificates()}
+            disabled={loadingCertificates || creatingCertificate}
+            title="Đọc lại kho chứng thư cá nhân của tài khoản Windows hiện tại"
+          >
+            {loadingCertificates ? 'Đang đọc…' : 'Quét lại'}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void createSigningCertificate()}
+            disabled={!loaded || loadingCertificates || creatingCertificate}
+            title="Ưu tiên chứng thư Windows của tài khoản hiện tại; chỉ tạo chứng thư tự ký nếu chưa có."
+          >
+            {creatingCertificate ? 'Đang đọc…' : 'Dùng tài khoản Windows'}
+          </button>
+        </div>
+      </div>
+      {pdfSigningCertificates.length > 0 && (
+        <select
+          aria-label="Chứng thư ký số Windows"
+          value={settings.certificateThumbprint || ''}
+          onChange={event => {
+            const certificateThumbprint = event.target.value || null
+            void update(
+              {
+                certificateThumbprint,
+                ...(certificateThumbprint ? {} : { autoSign: false }),
+              },
+              certificateThumbprint
+                ? 'Đã lưu chứng thư ký số đã chọn.'
+                : 'Đã bỏ chọn chứng thư và tắt tự ký số.',
+            )
+          }}
+        >
+          <option value="">Chọn chứng thư…</option>
+          {pdfSigningCertificates.map(cert => (
+            <option key={cert.thumbprint} value={cert.thumbprint}>
+              {cert.subject} · {cert.algorithm} · hết hạn {new Date(cert.expiresAt).toLocaleDateString('vi-VN')}
+            </option>
+          ))}
+        </select>
+      )}
+      {settings.certificateThumbprint && certificates.length > 0 &&
+        !pdfSigningCertificates.some(cert => cert.thumbprint === settings.certificateThumbprint) && (
+          <small className="helper-text">Chứng thư đã lưu không phù hợp ký PDF. LinguaHub sẽ chọn chứng thư ký tài liệu phù hợp.</small>
+        )}
+      {certificates.length > 0 && pdfSigningCertificates.length === 0 && (
+        <small className="helper-text">Không tìm thấy chứng thư Windows được cấp quyền ký tài liệu PDF.</small>
+      )}
+      <label htmlFor={signatureAppearanceSelectId}>Kiểu hiển thị chữ ký số</label>
+      <select
+        id={signatureAppearanceSelectId}
+        aria-label="Kiểu hiển thị chữ ký số"
+        value={settings.signatureAppearance}
+        onChange={event => {
+          const signatureAppearance: PdfSignatureAppearance =
+            event.target.value === 'detailedLeft' ? 'detailedLeft' : 'compactRight'
+          void update(
+            { signatureAppearance },
+            signatureAppearance === 'detailedLeft'
+              ? 'Đã chọn mẫu chi tiết bên trái.'
+              : 'Đã chọn mẫu gọn bên phải.',
+          )
+        }}
+      >
+        <option value="compactRight">Gọn — góc phải (như ảnh bên phải)</option>
+        <option value="detailedLeft">Chi tiết — góc trái (như ảnh bên trái)</option>
+      </select>
+      <label className="pdf-check" title="Ký PDF bằng chứng thư Windows. Xem người ký và trạng thái toàn vẹn trong bảng Signatures của Foxit hoặc Acrobat.">
+        <input
+          type="checkbox"
+          checked={settings.autoSign}
+          disabled={!settings.certificateThumbprint}
+          onChange={event =>
+            void update(
+              { autoSign: event.target.checked },
+              event.target.checked ? 'Đã bật tự ký số Windows cho PDF.' : 'Đã tắt tự ký số Windows.',
+            )
+          }
+        />
+        Tự ký PDF sau khi xuất
+      </label>
+      <small className="helper-text">Xem chứng thư và kiểm tra thay đổi sau ký trong bảng Signatures của Foxit/Acrobat. Chứng thư tự ký có thể cần xác nhận độ tin cậy.</small>
 
       <label htmlFor={compact ? 'pdf-name-template-settings' : 'pdf-name-template'}>Mẫu đặt tên tệp PDF</label>
       <input
@@ -220,9 +386,11 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
 export function PdfExportPanel({
   sampleId,
   sampleFiles,
+  onOpenSettings,
 }: {
   sampleId: string
   sampleFiles: ErpSampleFile[]
+  onOpenSettings?: () => void
 }) {
   const { settings, save, loaded } = usePdfSettings()
   const [erpSnapshot, setErpSnapshot] = useState<ErpPageSnapshot>({
@@ -238,11 +406,22 @@ export function PdfExportPanel({
   const [showFolderList, setShowFolderList] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<{
+    completed: number
+    total: number
+    currentFile: string
+    finished: boolean
+  } | null>(null)
   const [status, setStatus] = useState('')
+  const [scanError, setScanError] = useState('')
   const [log, setLog] = useState<LogEntry[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const busyRef = useRef(false)
   const baselineDone = useRef(false)
+  const askForSettings = useCallback(() => {
+    if (onOpenSettings) onOpenSettings()
+    else setShowSettings(true)
+  }, [onOpenSettings])
 
   const effectiveSampleId = useMemo(
     () => sampleId.trim() || erpSnapshot.sampleId.trim(),
@@ -258,15 +437,18 @@ export function PdfExportPanel({
     try {
       const snap = await window.lingua.scanErpPageAttachments()
       if (!snap) return null
-      setErpSnapshot(snap)
+      setScanError('')
+      const cleanedSnapshot = { ...snap, attachments: dedupeErpPageAttachments(snap.attachments) }
+      setErpSnapshot(cleanedSnapshot)
       setSelectedErpAttIds(prev => {
-        if (!snap.attachments.length) return []
-        const validIds = new Set(snap.attachments.map(a => a.id))
+        if (!cleanedSnapshot.attachments.length) return []
+        const validIds = new Set(cleanedSnapshot.attachments.map(a => a.id))
         const kept = prev.filter(id => validIds.has(id))
-        return kept.length ? kept : snap.attachments.map(a => a.id)
+        return kept.length ? kept : cleanedSnapshot.attachments.map(a => a.id)
       })
-      return snap
-    } catch {
+      return cleanedSnapshot
+    } catch (error) {
+      setScanError(errorText(error, 'Không quét được tệp trên phiếu ERP.'))
       return null
     }
   }, [])
@@ -300,16 +482,23 @@ export function PdfExportPanel({
       if (!attachments.length) return
       if (!settings.outputFolder) {
         setStatus('Anh chọn "Thư mục lưu PDF đích" trước.')
-        setShowSettings(true)
+        askForSettings()
         return
       }
       if (busyRef.current) return
       busyRef.current = true
       setBusy(true)
+      setProgress({ completed: 0, total: attachments.length, currentFile: '', finished: false })
       let okCount = 0
       try {
         for (const [index, att] of attachments.entries()) {
           const pdfName = computeErpAttachmentPdfName(att, index)
+          setProgress({
+            completed: index,
+            total: attachments.length,
+            currentFile: att.displayName,
+            finished: false,
+          })
           setStatus(
             `${origin === 'auto' ? 'Tự động đọc từ ERP: ' : 'Đang đọc từ ERP '} (${index + 1}/${attachments.length}) "${att.displayName}" → ${pdfName}.pdf…`,
           )
@@ -319,36 +508,41 @@ export function PdfExportPanel({
               att.id,
               att.fullName || att.displayName,
               pdfName,
+              att.href,
             )
             okCount += 1
             const seen = loadSeenErpAttachments()
             seen.add(erpAttachmentFingerprint(tabId, att))
             saveSeenErpAttachments(seen)
-            setLog(prev =>
-              [
-                {
-                  id: `erp-${Date.now()}-${index}`,
-                  name: `${att.fieldLabel}: ${att.displayName}`,
-                  ok: true,
-                  message: `${result.method} → ${result.outputPath.split(/[\\/]/).pop()}`,
-                  outputPath: result.outputPath,
-                },
-                ...prev,
-              ].slice(0, 30),
-            )
+            const logId = `erp|${tabId}|${erpSnapshot.sampleId}|${att.fieldLabel}|${att.fullName || att.displayName}`.toLocaleLowerCase()
+            setLog(prev => [
+              {
+                id: logId,
+                name: `${att.fieldLabel}: ${att.displayName}`,
+                ok: true,
+                message: `${result.method} → ${result.outputPath.split(/[\\/]/).pop()}`,
+                outputPath: result.outputPath,
+              },
+              ...prev.filter(entry => entry.id !== logId),
+            ].slice(0, 30))
           } catch (error) {
-            setLog(prev =>
-              [
-                {
-                  id: `erp-${Date.now()}-${index}`,
-                  name: `${att.fieldLabel}: ${att.displayName}`,
-                  ok: false,
-                  message: errorText(error, 'Không lưu được PDF từ tệp đính kèm ERP.'),
-                },
-                ...prev,
-              ].slice(0, 30),
-            )
+            const logId = `erp|${tabId}|${erpSnapshot.sampleId}|${att.fieldLabel}|${att.fullName || att.displayName}`.toLocaleLowerCase()
+            setLog(prev => [
+              {
+                id: logId,
+                name: `${att.fieldLabel}: ${att.displayName}`,
+                ok: false,
+                message: errorText(error, 'Không lưu được PDF từ tệp đính kèm ERP.'),
+              },
+              ...prev.filter(entry => entry.id !== logId),
+            ].slice(0, 30))
           }
+          setProgress({
+            completed: index + 1,
+            total: attachments.length,
+            currentFile: att.displayName,
+            finished: index + 1 === attachments.length,
+          })
         }
         setStatus(
           `${origin === 'auto' ? '⚡ Tự động: ' : ''}Đã đọc từ phiếu ERP và lưu ${okCount}/${attachments.length} tệp PDF vào ${settings.outputFolder}.`,
@@ -358,7 +552,7 @@ export function PdfExportPanel({
         setBusy(false)
       }
     },
-    [computeErpAttachmentPdfName, settings.outputFolder],
+    [askForSettings, computeErpAttachmentPdfName, settings.outputFolder],
   )
 
   // Auto-convert attachments detected directly on the open Arito ERP page ("Chọn files CS" / "Chọn files NM")
@@ -401,7 +595,7 @@ export function PdfExportPanel({
       if (!files.length) return
       if (!settings.outputFolder) {
         setStatus('Anh chọn "Thư mục lưu PDF đích" trước.')
-        setShowSettings(true)
+        askForSettings()
         return
       }
       if (busyRef.current) return
@@ -420,30 +614,28 @@ export function PdfExportPanel({
           try {
             const result: PdfExportResult = await window.lingua.convertToPdf(file.path, fileName)
             okCount += 1
-            setLog(prev =>
-              [
-                {
-                  id: `${Date.now()}-${index}`,
-                  name: file.name,
-                  ok: true,
-                  message: `${result.method} → ${result.outputPath.split(/[\\/]/).pop()}`,
-                  outputPath: result.outputPath,
-                },
-                ...prev,
-              ].slice(0, 30),
-            )
+            const logId = `file|${file.path.toLocaleLowerCase()}`
+            setLog(prev => [
+              {
+                id: logId,
+                name: file.name,
+                ok: true,
+                message: `${result.method} → ${result.outputPath.split(/[\\/]/).pop()}`,
+                outputPath: result.outputPath,
+              },
+              ...prev.filter(entry => entry.id !== logId),
+            ].slice(0, 30))
           } catch (error) {
-            setLog(prev =>
-              [
-                {
-                  id: `${Date.now()}-${index}`,
-                  name: file.name,
-                  ok: false,
-                  message: errorText(error, 'Không lưu được PDF.'),
-                },
-                ...prev,
-              ].slice(0, 30),
-            )
+            const logId = `file|${file.path.toLocaleLowerCase()}`
+            setLog(prev => [
+              {
+                id: logId,
+                name: file.name,
+                ok: false,
+                message: errorText(error, 'Không lưu được PDF.'),
+              },
+              ...prev.filter(entry => entry.id !== logId),
+            ].slice(0, 30))
           }
         }
         setStatus(
@@ -454,7 +646,7 @@ export function PdfExportPanel({
         setBusy(false)
       }
     },
-    [effectiveSampleId, settings.nameTemplate, settings.outputFolder],
+    [askForSettings, effectiveSampleId, settings.nameTemplate, settings.outputFolder],
   )
 
   // Auto mode for new files landing in the attachment folder (e.g. Downloads)
@@ -495,7 +687,7 @@ export function PdfExportPanel({
   const toggleAuto = async (enabled: boolean) => {
     if (enabled && !settings.outputFolder) {
       setStatus('Cần chọn "Thư mục lưu PDF đích" trước khi bật tự động.')
-      setShowSettings(true)
+      askForSettings()
       return
     }
     try {
@@ -517,37 +709,36 @@ export function PdfExportPanel({
     <div className="pdf-export-card" role="region" aria-label="Lưu PDF tự động">
       <div className="pdf-export-head">
         <div>
-          <h4>📄 Lưu PDF tự động (từ Chọn files CS / NM trên ERP)</h4>
-          <p className="helper-text">
-            Tự động đọc tệp đính kèm ở <strong>Chọn files CS / Chọn files NM</strong> trên phiếu Arito ERP → lưu thành
-            PDF qua Word/Excel/PowerPoint → đổi tên và cất vào thư mục chỉ định.
-          </p>
+          <h4 title="Lưu tệp đính kèm từ phiếu ERP thành PDF">📄 Lưu PDF</h4>
         </div>
         <button
           type="button"
           className="text-button"
-          aria-expanded={showSettings}
-          onClick={() => setShowSettings(value => !value)}
+          aria-expanded={onOpenSettings ? undefined : showSettings}
+          onClick={() => onOpenSettings ? onOpenSettings() : setShowSettings(value => !value)}
+          title="Cài đặt thư mục và tên tệp"
         >
-          {showSettings ? 'Ẩn cài đặt' : '⚙ Cài đặt'}
+          ⚙
         </button>
       </div>
 
-      {(showSettings || (loaded && !ready)) && <PdfExportSettingsForm />}
+      {!onOpenSettings && (showSettings || (loaded && !ready)) && <PdfExportSettingsForm compact />}
 
       {/* 1. Direct ERP Page Attachments ("Chọn files CS", "Chọn files NM") */}
       <div className="pdf-source-box">
         <div className="pdf-source-head">
           <strong>
-            📎 Tệp đính kèm trên phiếu ERP đang mở ({erpSnapshot.attachments.length})
+            📎 Tệp trên phiếu ({erpSnapshot.attachments.length})
           </strong>
           <button
             type="button"
             className="text-button"
             disabled={busy}
             onClick={() => void scanErpPage()}
+            aria-label="Quét lại trang ERP"
+            title="Quét lại trang ERP"
           >
-            ↻ Quét lại trang ERP
+            ↻
           </button>
         </div>
 
@@ -557,12 +748,14 @@ export function PdfExportPanel({
             checked={settings.autoConvert}
             onChange={event => void toggleAuto(event.target.checked)}
           />
-          <span>
-            <strong>Tự động đọc & lưu PDF</strong> ngay khi phiếu ERP có tệp ở Chọn files CS / NM (hoặc khi có tệp mới tải về)
-          </span>
+            <span title="Tự động lưu PDF từ tệp đính kèm trên phiếu ERP">
+              <strong>Tự lưu PDF</strong>
+            </span>
         </label>
 
-        {erpSnapshot.attachments.length > 0 ? (
+        {scanError ? (
+          <p className="helper-text" role="status">{scanError}</p>
+        ) : erpSnapshot.attachments.length > 0 ? (
           <>
             <ul className="pdf-source-list">
               {erpSnapshot.attachments.map((att, idx) => {
@@ -581,10 +774,9 @@ export function PdfExportPanel({
                           }
                         />
                         <span>
-                          <strong>
-                            [{att.fieldLabel}] {att.displayName}
-                          </strong>
-                          <small>Tên PDF sẽ lưu: {previewPdfName}.pdf</small>
+                          <small className="pdf-erp-field-label">{att.fieldLabel}</small>
+                          <strong title={att.displayName}>{att.displayName}</strong>
+                          <small title={`Tên PDF sẽ lưu: ${previewPdfName}.pdf`}>→ {previewPdfName}.pdf</small>
                         </span>
                       </label>
                       <button
@@ -592,8 +784,10 @@ export function PdfExportPanel({
                         className="secondary-button"
                         disabled={busy}
                         onClick={() => void convertErpAttachments([att], erpSnapshot.tabId, 'manual')}
+                        aria-label={`Lưu PDF: ${att.displayName}`}
+                        title={`Lưu PDF: ${previewPdfName}.pdf`}
                       >
-                        💾 Lưu PDF
+                        💾
                       </button>
                     </div>
                     <input
@@ -603,7 +797,8 @@ export function PdfExportPanel({
                       onChange={event =>
                         setCustomNames(prev => ({ ...prev, [att.id]: event.target.value }))
                       }
-                      placeholder={`Đổi tên riêng (mặc định: ${previewPdfName}.pdf)`}
+                      placeholder="Tên tệp PDF riêng (tùy chọn)"
+                      title={`Tên mặc định: ${previewPdfName}.pdf`}
                     />
                   </li>
                 )
@@ -614,13 +809,14 @@ export function PdfExportPanel({
               className="primary-button"
               disabled={busy || !checkedErpAttachments.length}
               onClick={() => void convertErpAttachments(checkedErpAttachments, erpSnapshot.tabId, 'manual')}
+              title="Đọc và lưu các tệp đã chọn thành PDF"
             >
-              ⚡ Đọc & Lưu PDF từ Chọn files CS / NM ({checkedErpAttachments.length})
+              ⚡ Lưu PDF đã chọn ({checkedErpAttachments.length})
             </button>
           </>
         ) : (
           <p className="helper-text">
-            Hãy mở mục <strong>File đính kèm</strong> (có <em>Chọn files CS / Chọn files NM</em>) trên phiếu Arito ERP bên trái — hệ thống sẽ tự nhận diện tệp tại đây.
+            Chưa tìm thấy tệp đính kèm.
           </p>
         )}
       </div>
@@ -701,6 +897,30 @@ export function PdfExportPanel({
         </p>
       )}
 
+      {progress && progress.total > 0 && (
+        <div className="pdf-export-progress" role="status" aria-live="polite">
+          <div className="pdf-export-progress-label">
+            <strong>{progress.finished ? 'Hoàn tất' : `Đang xử lý ${progress.completed + 1}/${progress.total}`}</strong>
+            <span>{progress.completed}/{progress.total} tệp</span>
+          </div>
+          <div
+            className={busy ? 'pdf-export-progress-track running' : 'pdf-export-progress-track'}
+            role="progressbar"
+            aria-label="Số tệp ERP đã xử lý"
+            aria-valuemin={0}
+            aria-valuemax={progress.total}
+            aria-valuenow={progress.completed}
+          >
+            <span
+              className="pdf-export-progress-fill"
+              style={{ width: `${Math.round((progress.completed / progress.total) * 100)}%` }}
+            />
+            {busy && <span className="pdf-export-progress-sweep" />}
+          </div>
+          <small>{progress.finished ? 'Đã xử lý xong danh sách tệp.' : progress.currentFile || 'Đang kết nối ERP…'}</small>
+        </div>
+      )}
+
       {log.length > 0 && (
         <ul className="pdf-export-log" aria-label="Kết quả lưu PDF gần đây">
           {log.map(entry => (
@@ -710,13 +930,32 @@ export function PdfExportPanel({
                 <small>{entry.message}</small>
               </span>
               {entry.outputPath && (
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => void window.lingua.openLocalPath(entry.outputPath!).catch(() => {})}
-                >
-                  Mở PDF
-                </button>
+                <div className="pdf-export-log-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      void window.lingua
+                        .openLocalPath(entry.outputPath!)
+                        .catch(error => setStatus(errorText(error, 'Không mở được PDF.')))
+                    }
+                    title="Mở tệp PDF bằng ứng dụng mặc định"
+                  >
+                    Mở PDF
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      void window.lingua
+                        .openLocalPath(parentFolder(entry.outputPath!))
+                        .catch(error => setStatus(errorText(error, 'Không mở được thư mục chứa PDF.')))
+                    }
+                    title="Mở thư mục đang chứa tệp PDF"
+                  >
+                    Mở thư mục
+                  </button>
+                </div>
               )}
             </li>
           ))}

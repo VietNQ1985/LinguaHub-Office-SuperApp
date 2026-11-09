@@ -86,6 +86,8 @@ declare global {
       }>
       inspectSampleFile(path: string): Promise<ErpFileInspection>
       getPdfExportSettings(): Promise<import('./pdfExport').PdfExportSettings>
+      listPdfSigningCertificates(): Promise<import('./pdfExport').WindowsPdfSigningCertificate[]>
+      createPdfSigningCertificate(): Promise<import('./pdfExport').WindowsPdfSigningCertificate>
       setPdfExportSettings(
         settings: import('./pdfExport').PdfExportSettings,
       ): Promise<import('./pdfExport').PdfExportSettings>
@@ -98,7 +100,20 @@ declare global {
         attId: string,
         displayName: string,
         fileName: string,
+        href?: string | null,
       ): Promise<import('./pdfExport').PdfExportResult>
+      getErpCredentialStatus(tabId: string): Promise<{
+        origin: string
+        saved: boolean
+        username: string | null
+      }>
+      saveErpCredential(
+        tabId: string,
+        username: string,
+        password: string,
+      ): Promise<{ origin: string; saved: boolean; username: string | null }>
+      deleteErpCredential(tabId: string): Promise<void>
+      fillErpCredential(tabId: string): Promise<{ origin: string; usernameFilled: boolean }>
       checkAppUpdate(): Promise<import('./AppUpdateCard').AppUpdateInfo>
       installAppUpdate(downloadUrl: string): Promise<string>
       webTab(id: string, address: string, close?: boolean): Promise<void>
@@ -1412,7 +1427,8 @@ function App() {
               </section>
             )}
 
-            {activeArea === 'memory' && <MemoryStudio />}
+            {activeArea === 'memory' && <MemoryStudio initialTab="sources" />}
+            {activeArea === 'prompts' && <MemoryStudio initialTab="prompts" />}
 
             {activeArea === 'translation' && (
               <section className="office-feature-page" aria-labelledby="office-translation-title">
@@ -1527,6 +1543,7 @@ function App() {
                   <SampleFilePanel
                     onSwitchToAi={() => setErpRightPanelView('ai')}
                     onOpenSettings={openWorkspaceManagement}
+                    activeTab={webTabs.find(tab => tab.id === activeWeb) || null}
                   />
                 ) : (
                   <React.Suspense

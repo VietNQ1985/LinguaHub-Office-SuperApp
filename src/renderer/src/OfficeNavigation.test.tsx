@@ -14,11 +14,14 @@ test('sidebar routes to the selected area and shows the application version and 
   try {
     await act(async () => root.render(createElement(OfficeSidebar, { active: 'dashboard', collapsed: false, onNavigate: navigate, onToggle: vi.fn(), onManageWorkspaces: vi.fn() })))
     expect(dom.window.document.querySelector('[aria-current="page"]')?.textContent).toContain('Tổng quan')
-    expect(dom.window.document.body.textContent).toContain('v0.4.2')
+    expect(dom.window.document.body.textContent).toContain('v0.4.13')
     expect(dom.window.document.body.textContent).toContain('© 2026 Viet Nguyen Quoc')
     const messages = Array.from(dom.window.document.querySelectorAll('button')).find(button => button.textContent?.includes('Tin nhắn'))!
     await act(async () => messages.click())
     expect(navigate).toHaveBeenCalledWith('messages')
+    const promptStudio = Array.from(dom.window.document.querySelectorAll('button')).find(button => button.textContent?.includes('Prompt Studio'))!
+    await act(async () => promptStudio.click())
+    expect(navigate).toHaveBeenCalledWith('prompts')
   } finally {
     await act(async () => root.unmount())
     dom.window.close()
