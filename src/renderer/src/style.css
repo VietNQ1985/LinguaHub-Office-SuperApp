@@ -73,7 +73,7 @@ h2, h3, h4 { color: var(--text); }
 .workspace-tab:hover { color: var(--text); background: var(--soft); }
 .workspace-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--soft); }
 .erp-subtabs {
-  display: flex; flex: 0 0 40px; min-width: 0; height: 40px; align-items: stretch; gap: 5px;
+  display: flex; flex: 0 0 32px; min-width: 0; height: 32px; align-items: stretch; gap: 3px;
   padding: 0 14px 0 20px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin;
   background: var(--soft); border-bottom: 1px solid var(--border); z-index: 1;
 }
@@ -649,12 +649,12 @@ span.ai-trust-pill { cursor: default; }
 .settings-erp-root-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* ERP File Processing & Re-learning Panel */
-.erp-panel-header { display: grid; gap: 8px; margin-bottom: 4px; }
+.erp-panel-header { display: grid; gap: 4px; margin-bottom: 0; }
 .erp-panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .erp-panel-title-row h2 { margin: 0; font-size: 16px; }
 .erp-panel-top-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .erp-panel-top-actions button { padding: 6px 10px; font-size: 12px; border-radius: 9px; }
-.erp-panel-header .ai-trust-bar { padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.erp-panel-header .ai-trust-bar { padding: 3px 0; border: 0; background: transparent; }
 
 .sample-panel-search-card { display: grid; gap: 8px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
 .sample-panel-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
@@ -699,7 +699,7 @@ span.ai-trust-pill { cursor: default; }
 }
 
 /* Lưu PDF tự động */
-.pdf-export-card { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
+.pdf-export-card { display: grid; gap: 8px; margin-top: 8px; padding: 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); }
 .pdf-export-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .pdf-export-head h4 { margin: 0 0 4px; font-size: 14px; }
 .pdf-export-head p { margin: 0; }
@@ -737,6 +737,18 @@ span.ai-trust-pill { cursor: default; }
 .erp-panel-nav-tab { display: flex; min-width: 0; min-height: 38px; align-items: center; justify-content: center; gap: 5px; padding: 6px 7px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--surface); font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .erp-panel-nav-tab > span { flex: 0 0 auto; }
 .erp-panel-nav-tab.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: inset 0 -2px 0 var(--accent); }
+.sample-file-panel .erp-panel-nav-tab { min-height: 32px; padding: 4px; }
+.sample-file-panel .pdf-source-box { padding: 8px; border-radius: 8px; }
+.sample-file-panel .pdf-erp-att-item { padding: 8px; }
+.sample-file-panel .pdf-erp-att-item strong { font-size: 12px; line-height: 1.4; }
+.sample-file-panel .pdf-source-list { margin-block: 6px; }
+.sample-file-panel { padding: 8px; }
+.sample-file-panel .pdf-export-card { padding: 0; border: 0; background: transparent; }
+.sample-file-panel .pdf-source-box { border-style: solid; background: var(--surface); }
+.sample-file-panel .erp-panel-title-row h2 { font-size: 13px; }
+.sample-file-panel .ai-trust-pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.sample-file-panel .erp-panel-header .ai-trust-bar { flex-wrap: nowrap; gap: 4px; }
+.sample-file-panel .erp-panel-nav { gap: 3px; }
 .erp-tools-workbench > .erp-tool-tabs { position: sticky; top: 49px; z-index: 7; margin-bottom: 0; background: var(--bg); }
 .erp-panel-settings { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .erp-panel-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

@@ -91,7 +91,7 @@ main > section.dashboard-home {
 .office-version { display:grid; gap:3px; padding:10px 8px 2px; color:var(--muted); font-size:10px; line-height:1.35; }
 .office-version small { color:var(--muted); font-size:10px; }
 .office-sidebar-collapsed .office-version { justify-items:center; padding-left:0; padding-right:0; font-size:9px; }
-.office-topbar { display:flex; flex:0 0 64px; align-items:center; gap:12px; min-width:0; height:64px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--surface); z-index:3; }
+.office-topbar { display:flex; flex:0 0 40px; align-items:center; gap:8px; min-width:0; height:40px; padding:0 10px; border-bottom:1px solid var(--border); background:var(--surface); z-index:3; }
 .office-service-switcher { display:flex; flex:0 0 42px; align-items:center; gap:6px; min-width:0; height:42px; padding:0 14px; overflow-x:auto; border-bottom:1px solid var(--border); background:var(--surface); scrollbar-width:thin; }
 .office-service-tab { display:inline-flex; flex:0 0 auto; align-items:center; gap:8px; height:32px; padding:0 11px; border:1px solid transparent; border-radius:8px; color:var(--muted); background:transparent; font-size:12px; font-weight:600; }
 .office-service-tab:hover { color:var(--text); background:var(--soft); }
@@ -103,7 +103,7 @@ main > section.dashboard-home {
 .office-back-button,.office-icon-button { display:grid; flex:0 0 36px; width:36px; height:36px; place-items:center; border:1px solid transparent; border-radius:9px; color:var(--muted); background:transparent; }
 .office-back-button:hover,.office-icon-button:hover { border-color:var(--border); color:var(--text); background:var(--soft); }
 .office-page-heading { display:grid; flex:0 0 auto; gap:1px; min-width:118px; }
-.office-page-heading span { color:var(--muted); font-size:10px; }
+.office-page-heading span { display:none; }
 .office-page-heading h1 { overflow:hidden; margin:0; color:var(--text); font-size:16px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
 .office-topbar-actions { display:flex; flex:0 0 auto; align-items:center; gap:5px; min-width:0; margin-left:auto; }
 .office-network-status { display:flex; align-items:center; gap:6px; max-width:180px; overflow:hidden; color:var(--muted); font-size:11px; white-space:nowrap; }
@@ -115,6 +115,11 @@ main > section.dashboard-home {
 .office-global-search::before { position:absolute; z-index:1; left:12px; width:13px; height:13px; border:1.7px solid var(--muted); border-radius:50%; content:""; pointer-events:none; }
 .office-global-search::after { position:absolute; z-index:1; left:25px; top:23px; width:6px; height:1.7px; transform:rotate(45deg); transform-origin:left; background:var(--muted); content:""; pointer-events:none; }
 .office-global-search kbd { position:absolute; right:8px; padding:3px 5px; border:1px solid var(--border); border-radius:5px; color:var(--muted); background:var(--surface); font:10px "Segoe UI",sans-serif; }
+.office-topbar .office-back-button,.office-topbar .office-icon-button { flex-basis:28px; width:28px; height:28px; border-radius:6px; }
+.office-topbar .office-page-heading h1 { font-size:13px; }
+.office-topbar .office-global-search,.office-topbar .office-global-search input { height:28px; }
+.office-topbar .office-global-search input { border-radius:6px; }
+.office-topbar .office-global-search::after { top:19px; }
 .office-search-popover { position:absolute; top:42px; left:0; z-index:12; width:min(420px,calc(100vw - 280px)); max-height:390px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:0 12px 36px rgb(15 23 42 / 18%); }
 .office-search-popover > p { padding:5px 9px 8px; color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; }
 .office-search-popover > button { display:flex; align-items:center; gap:10px; width:100%; padding:9px; border:0; border-radius:8px; color:var(--text); background:transparent; text-align:left; }
@@ -294,7 +299,7 @@ main > section.dashboard-home {
   .office-topbar-actions { gap:1px; }
 }
 @media (max-width:760px) {
-  .office-topbar { flex-basis:57px; height:57px; }
+  .office-topbar { flex-basis:40px; height:40px; }
   .office-page-heading { min-width:0; }
   .office-page-heading > span,.office-network-status,.office-topbar-actions > .office-icon-button:nth-last-child(2),.office-topbar-actions > .office-icon-button:nth-last-child(3) { display:none; }
   .office-global-search { min-width:95px; }

@@ -22,9 +22,9 @@ use tauri::{
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
 use zeroize::Zeroize;
 
-pub const HEADER: f64 = 64.0;
+pub const HEADER: f64 = 40.0;
 /// The ERP child-tab strip rendered directly below the main navigation.
-pub const ERP_TABS_HEIGHT: f64 = 40.0;
+pub const ERP_TABS_HEIGHT: f64 = 32.0;
 /// The message app switcher rendered below the office navigation.
 pub const SERVICE_SWITCHER_HEIGHT: f64 = 42.0;
 

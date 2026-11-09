@@ -333,9 +333,9 @@ function App() {
   activeAreaRef.current = activeArea
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
     try {
-      return localStorage.getItem('linguahub.office.sidebar.v1') === 'collapsed'
+      return localStorage.getItem('linguahub.office.sidebar.v2') !== 'expanded'
     } catch {
-      return false
+      return true
     }
   })
   const [theme, setTheme] = React.useState<'light' | 'dark'>('light')
@@ -504,7 +504,7 @@ function App() {
   const [activeService, setActiveService] = React.useState<UiService>('whatsapp')
   const operation = React.useRef(0)
   const [fallbackService, setFallbackService] = React.useState<WorkspaceService | null>(null)
-  const [panelWidth, setPanelWidth] = React.useState(400)
+  const [panelWidth, setPanelWidth] = React.useState(360)
   const [panelCollapsed, setPanelCollapsed] = React.useState(false)
   const [status, setStatus] = React.useState('Đang mở…')
   React.useEffect(() => {
@@ -529,7 +529,12 @@ function App() {
     void window.lingua
       .getPreferences()
       .then(preferences => {
-        setPanelWidth(preferences.panelWidth)
+        const compactLayout = localStorage.getItem('linguahub.office.compact-layout.v1')
+        setPanelWidth(compactLayout ? preferences.panelWidth : 360)
+        if (!compactLayout) {
+          localStorage.setItem('linguahub.office.compact-layout.v1', 'applied')
+          void window.lingua.setWorkspacePanelLayout(360, false, true)
+        }
         setTheme(preferences.theme === 'dark' ? 'dark' : 'light')
         document.documentElement.dataset.theme = preferences.theme
         document.documentElement.lang = 'vi'
@@ -540,7 +545,7 @@ function App() {
   React.useEffect(() => {
     try {
       localStorage.setItem(
-        'linguahub.office.sidebar.v1',
+        'linguahub.office.sidebar.v2',
         sidebarCollapsed ? 'collapsed' : 'expanded',
       )
     } catch {
