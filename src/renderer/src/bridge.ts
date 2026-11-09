@@ -65,7 +65,7 @@ window.lingua = {
   createPdfSigningCertificate: () => call('pdf_export_create_signing_certificate'),
   listPdfExportSource: () => call('pdf_export_list_source'),
   convertToPdf: (path: string, fileName: string) => call('pdf_export_convert', {path, fileName}),
-  scanErpPageAttachments: () => call('pdf_export_scan_erp_page'),
+  scanErpPageAttachments: (tabId: string) => call('pdf_export_scan_erp_page', { tabId }),
   convertErpAttachmentToPdf: (
     tabId: string,
     attId: string,

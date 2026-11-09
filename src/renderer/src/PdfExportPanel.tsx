@@ -8,23 +8,19 @@ import {
   defaultPdfSettings,
   detectSampleId,
   erpAttachmentFingerprint,
-  fileFingerprint,
   isPdfConvertible,
   loadSeenErpAttachments,
-  loadSeenFiles,
   renderPdfName,
   saveSeenErpAttachments,
-  saveSeenFiles,
   type ErpPageAttachment,
   type ErpPageSnapshot,
   type PdfExportResult,
   type PdfSignatureAppearance,
+  type PdfSignaturePosition,
   type PdfExportSettings,
   type WindowsPdfSigningCertificate,
 } from './pdfExport'
 
-const POLL_MS = 3500
-const ERP_SCAN_MS = 2500
 
 type LogEntry = {
   id: string
@@ -190,6 +186,9 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
   const signatureAppearanceSelectId = compact
     ? 'pdf-signature-appearance-compact'
     : 'pdf-signature-appearance'
+  const signaturePositionSelectId = `${signatureAppearanceSelectId}-position`
+  const signaturePosition = settings.signaturePosition ??
+    (settings.signatureAppearance === 'detailedLeft' ? 'topLeft' : 'topRight')
 
   return (
     <div className={compact ? 'pdf-settings-form compact' : 'pdf-settings-form'}>
@@ -296,15 +295,27 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
           const signatureAppearance: PdfSignatureAppearance =
             event.target.value === 'detailedLeft' ? 'detailedLeft' : 'compactRight'
           void update(
-            { signatureAppearance },
-            signatureAppearance === 'detailedLeft'
-              ? 'Đã chọn mẫu chi tiết bên trái.'
-              : 'Đã chọn mẫu gọn bên phải.',
+            { signatureAppearance, signaturePosition },
+            'Đã lưu kiểu chữ ký số.',
           )
         }}
       >
-        <option value="compactRight">Gọn — góc phải (như ảnh bên phải)</option>
-        <option value="detailedLeft">Chi tiết — góc trái (như ảnh bên trái)</option>
+        <option value="compactRight">Thu gọn</option>
+        <option value="detailedLeft">Đầy đủ</option>
+      </select>
+      <label htmlFor={signaturePositionSelectId}>Vị trí chữ ký trên trang đầu</label>
+      <select
+        id={signaturePositionSelectId}
+        value={signaturePosition}
+        onChange={event => void update(
+          { signaturePosition: event.target.value as PdfSignaturePosition },
+          'Đã lưu vị trí chữ ký số.',
+        )}
+      >
+        <option value="topLeft">Trên trái</option>
+        <option value="topRight">Trên phải</option>
+        <option value="bottomLeft">Dưới trái</option>
+        <option value="bottomRight">Dưới phải</option>
       </select>
       <label className="pdf-check" title="Ký PDF bằng chứng thư Windows. Xem người ký và trạng thái toàn vẹn trong bảng Signatures của Foxit hoặc Acrobat.">
         <input
@@ -384,15 +395,17 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
 }
 
 export function PdfExportPanel({
+  activeTabId,
   sampleId,
   sampleFiles,
   onOpenSettings,
 }: {
+  activeTabId: string
   sampleId: string
   sampleFiles: ErpSampleFile[]
   onOpenSettings?: () => void
 }) {
-  const { settings, save, loaded } = usePdfSettings()
+  const { settings, loaded } = usePdfSettings()
   const [erpSnapshot, setErpSnapshot] = useState<ErpPageSnapshot>({
     tabId: '',
     pageTitle: '',
@@ -417,7 +430,7 @@ export function PdfExportPanel({
   const [log, setLog] = useState<LogEntry[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const busyRef = useRef(false)
-  const baselineDone = useRef(false)
+  const scanInFlight = useRef(false)
   const askForSettings = useCallback(() => {
     if (onOpenSettings) onOpenSettings()
     else setShowSettings(true)
@@ -433,9 +446,11 @@ export function PdfExportPanel({
 
   // Scan the open Arito ERP page for attachments in "Chọn files CS", "Chọn files NM", "File đính kèm"
   const scanErpPage = useCallback(async (): Promise<ErpPageSnapshot | null> => {
-    if (typeof window.lingua?.scanErpPageAttachments !== 'function') return null
+    if (!activeTabId || scanInFlight.current || busyRef.current ||
+        typeof window.lingua?.scanErpPageAttachments !== 'function') return null
+    scanInFlight.current = true
     try {
-      const snap = await window.lingua.scanErpPageAttachments()
+      const snap = await window.lingua.scanErpPageAttachments(activeTabId)
       if (!snap) return null
       setScanError('')
       const cleanedSnapshot = { ...snap, attachments: dedupeErpPageAttachments(snap.attachments) }
@@ -450,18 +465,25 @@ export function PdfExportPanel({
     } catch (error) {
       setScanError(errorText(error, 'Không quét được tệp trên phiếu ERP.'))
       return null
+    } finally {
+      scanInFlight.current = false
     }
-  }, [])
+  }, [activeTabId])
 
   useEffect(() => {
-    void scanErpPage()
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) {
-        void scanErpPage()
-      }
-    }, ERP_SCAN_MS)
-    return () => window.clearInterval(timer)
-  }, [scanErpPage])
+    if (!activeTabId) return
+    let stopped = false
+    let nextScan: number | undefined
+    const refresh = async () => {
+      if (document.visibilityState === 'visible') await scanErpPage()
+      if (!stopped) nextScan = window.setTimeout(() => void refresh(), 4000)
+    }
+    void refresh()
+    return () => {
+      stopped = true
+      window.clearTimeout(nextScan)
+    }
+  }, [activeTabId, scanErpPage])
 
   const computeErpAttachmentPdfName = useCallback(
     (att: ErpPageAttachment, index: number): string => {
@@ -478,7 +500,7 @@ export function PdfExportPanel({
   )
 
   const convertErpAttachments = useCallback(
-    async (attachments: ErpPageAttachment[], tabId: string, origin: 'manual' | 'auto') => {
+    async (attachments: ErpPageAttachment[], tabId: string) => {
       if (!attachments.length) return
       if (!settings.outputFolder) {
         setStatus('Anh chọn "Thư mục lưu PDF đích" trước.')
@@ -500,7 +522,7 @@ export function PdfExportPanel({
             finished: false,
           })
           setStatus(
-            `${origin === 'auto' ? 'Tự động đọc từ ERP: ' : 'Đang đọc từ ERP '} (${index + 1}/${attachments.length}) "${att.displayName}" → ${pdfName}.pdf…`,
+            `Đang đọc từ ERP (${index + 1}/${attachments.length}) "${att.displayName}" → ${pdfName}.pdf…`,
           )
           try {
             const result = await window.lingua.convertErpAttachmentToPdf(
@@ -545,7 +567,7 @@ export function PdfExportPanel({
           })
         }
         setStatus(
-          `${origin === 'auto' ? '⚡ Tự động: ' : ''}Đã đọc từ phiếu ERP và lưu ${okCount}/${attachments.length} tệp PDF vào ${settings.outputFolder}.`,
+          `Đã đọc từ phiếu ERP và lưu ${okCount}/${attachments.length} tệp PDF vào ${settings.outputFolder}.`,
         )
       } finally {
         busyRef.current = false
@@ -554,26 +576,6 @@ export function PdfExportPanel({
     },
     [askForSettings, computeErpAttachmentPdfName, settings.outputFolder],
   )
-
-  // Auto-convert attachments detected directly on the open Arito ERP page ("Chọn files CS" / "Chọn files NM")
-  useEffect(() => {
-    if (!settings.autoConvert || !settings.outputFolder || !erpSnapshot.attachments.length) {
-      return
-    }
-    if (busyRef.current) return
-    const seen = loadSeenErpAttachments()
-    const fresh = erpSnapshot.attachments.filter(
-      att => !seen.has(erpAttachmentFingerprint(erpSnapshot.tabId, att)),
-    )
-    if (!fresh.length) return
-    void convertErpAttachments(fresh, erpSnapshot.tabId, 'auto')
-  }, [
-    settings.autoConvert,
-    settings.outputFolder,
-    erpSnapshot.tabId,
-    erpSnapshot.attachments,
-    convertErpAttachments,
-  ])
 
   const refreshSource = useCallback(async (): Promise<ErpSampleFile[]> => {
     if (!settings.sourceFolder || typeof window.lingua?.listPdfExportSource !== 'function') {
@@ -591,7 +593,7 @@ export function PdfExportPanel({
   }, [loaded, settings.sourceFolder, refreshSource])
 
   const convertMany = useCallback(
-    async (files: ErpSampleFile[], origin: 'manual' | 'auto') => {
+    async (files: ErpSampleFile[]) => {
       if (!files.length) return
       if (!settings.outputFolder) {
         setStatus('Anh chọn "Thư mục lưu PDF đích" trước.')
@@ -639,7 +641,7 @@ export function PdfExportPanel({
           }
         }
         setStatus(
-          `${origin === 'auto' ? 'Tự động: ' : ''}Đã lưu ${okCount}/${files.length} tệp PDF vào ${settings.outputFolder}.`,
+          `Đã lưu ${okCount}/${files.length} tệp PDF vào ${settings.outputFolder}.`,
         )
       } finally {
         busyRef.current = false
@@ -650,63 +652,11 @@ export function PdfExportPanel({
   )
 
   // Auto mode for new files landing in the attachment folder (e.g. Downloads)
-  useEffect(() => {
-    if (!settings.autoConvert || !settings.sourceFolder || !settings.outputFolder) {
-      baselineDone.current = false
-      return
-    }
-    let stopped = false
-    const tick = async () => {
-      if (stopped || busyRef.current) return
-      try {
-        const files = await refreshSource()
-        const seen = loadSeenFiles()
-        if (!baselineDone.current) {
-          for (const file of files) seen.add(fileFingerprint(file))
-          saveSeenFiles(seen)
-          baselineDone.current = true
-          return
-        }
-        const fresh = files.filter(file => !seen.has(fileFingerprint(file)))
-        if (!fresh.length) return
-        for (const file of fresh) seen.add(fileFingerprint(file))
-        saveSeenFiles(seen)
-        await convertMany(fresh, 'auto')
-      } catch (error) {
-        setStatus(errorText(error, 'Tự động: không đọc được thư mục tệp đính kèm.'))
-      }
-    }
-    void tick()
-    const timer = window.setInterval(() => void tick(), POLL_MS)
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-    }
-  }, [settings.autoConvert, settings.sourceFolder, settings.outputFolder, refreshSource, convertMany])
-
-  const toggleAuto = async (enabled: boolean) => {
-    if (enabled && !settings.outputFolder) {
-      setStatus('Cần chọn "Thư mục lưu PDF đích" trước khi bật tự động.')
-      askForSettings()
-      return
-    }
-    try {
-      await save({ ...settings, autoConvert: enabled })
-      setStatus(
-        enabled
-          ? 'Đã bật tự động: tự động đọc tệp từ Chọn files CS / NM trên phiếu ERP và lưu thành PDF.'
-          : 'Đã tắt tự động lưu PDF.',
-      )
-    } catch (error) {
-      setStatus(errorText(error, 'Không đổi được chế độ tự động.'))
-    }
-  }
-
   const checkedErpAttachments = erpSnapshot.attachments.filter(a => selectedErpAttIds.includes(a.id))
   const checkedFiles = sourceFiles.filter(f => checked.includes(f.path))
 
   return (
-    <div className="pdf-export-card" role="region" aria-label="Lưu PDF tự động">
+    <div className="pdf-export-card" role="region" aria-label="Lưu PDF">
       <div className="pdf-export-head">
         <div>
           <h4 title="Lưu tệp đính kèm từ phiếu ERP thành PDF">📄 Lưu PDF</h4>
@@ -742,17 +692,6 @@ export function PdfExportPanel({
           </button>
         </div>
 
-        <label className="pdf-check">
-          <input
-            type="checkbox"
-            checked={settings.autoConvert}
-            onChange={event => void toggleAuto(event.target.checked)}
-          />
-            <span title="Tự động lưu PDF từ tệp đính kèm trên phiếu ERP">
-              <strong>Tự lưu PDF</strong>
-            </span>
-        </label>
-
         {scanError ? (
           <p className="helper-text" role="status">{scanError}</p>
         ) : erpSnapshot.attachments.length > 0 ? (
@@ -783,7 +722,7 @@ export function PdfExportPanel({
                         type="button"
                         className="secondary-button"
                         disabled={busy}
-                        onClick={() => void convertErpAttachments([att], erpSnapshot.tabId, 'manual')}
+                        onClick={() => void convertErpAttachments([att], erpSnapshot.tabId)}
                         aria-label={`Lưu PDF: ${att.displayName}`}
                         title={`Lưu PDF: ${previewPdfName}.pdf`}
                       >
@@ -808,7 +747,7 @@ export function PdfExportPanel({
               type="button"
               className="primary-button"
               disabled={busy || !checkedErpAttachments.length}
-              onClick={() => void convertErpAttachments(checkedErpAttachments, erpSnapshot.tabId, 'manual')}
+              onClick={() => void convertErpAttachments(checkedErpAttachments, erpSnapshot.tabId)}
               title="Đọc và lưu các tệp đã chọn thành PDF"
             >
               ⚡ Lưu PDF đã chọn ({checkedErpAttachments.length})
@@ -828,7 +767,7 @@ export function PdfExportPanel({
             type="button"
             className="secondary-button"
             disabled={busy}
-            onClick={() => void convertMany(convertibleSampleFiles, 'manual')}
+            onClick={() => void convertMany(convertibleSampleFiles)}
             title="Lưu PDF các tệp đang được chọn trong danh sách Sample ID ở trên"
           >
             💾 Lưu PDF tệp Sample ID đã chọn ({convertibleSampleFiles.length})
@@ -882,7 +821,7 @@ export function PdfExportPanel({
                 type="button"
                 className="secondary-button"
                 disabled={busy || !checkedFiles.length}
-                onClick={() => void convertMany(checkedFiles, 'manual')}
+                onClick={() => void convertMany(checkedFiles)}
               >
                 💾 Lưu PDF tệp đã chọn ({checkedFiles.length})
               </button>

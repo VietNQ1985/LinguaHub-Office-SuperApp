@@ -1,8 +1,8 @@
 {
   "name": "linguahub-office-superapp",
-  "version": "0.4.13",
+  "version": "0.4.15",
   "private": true,
-  "description": "LinguaHub Office SuperApp 0.4.13 on Tauri v2 with Office Dashboard, ERP workspaces, Blob-based PDF capture, Windows PDF signing, and Windows-protected ERP credentials.",
+  "description": "LinguaHub Office SuperApp 0.4.15 on Tauri v2 with Office Dashboard, ERP workspaces, Blob-based PDF capture, Windows PDF signing, and Windows-protected ERP credentials.",
   "license": "MIT",
   "type": "module",
   "scripts": {

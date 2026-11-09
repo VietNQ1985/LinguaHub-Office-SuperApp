@@ -820,6 +820,8 @@ export function SampleFilePanel({
 
       {activePanelSection === 'attachments' && (
         <PdfExportPanel
+          key={activeTab?.id}
+          activeTabId={activeTab?.id ?? ''}
           sampleId={result?.sampleId || sampleId.trim()}
           sampleFiles={selectedFiles}
           onOpenSettings={() => setActivePanelSection('settings')}

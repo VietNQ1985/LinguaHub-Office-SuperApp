@@ -27,6 +27,15 @@ pub enum PdfSignatureAppearance {
     DetailedLeft,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum PdfSignaturePosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 pub const WORD_EXTENSIONS: &[&str] = &[
     "doc", "docx", "docm", "rtf", "odt", "txt", "htm", "html", "xml",
 ];
@@ -46,6 +55,7 @@ pub struct PdfExportSettings {
     pub certificate_thumbprint: Option<String>,
     #[serde(default)]
     pub signature_appearance: PdfSignatureAppearance,
+    pub signature_position: Option<PdfSignaturePosition>,
 }
 
 impl Default for PdfExportSettings {
@@ -59,6 +69,7 @@ impl Default for PdfExportSettings {
             auto_sign: false,
             certificate_thumbprint: None,
             signature_appearance: PdfSignatureAppearance::default(),
+            signature_position: None,
         }
     }
 }
@@ -410,6 +421,7 @@ fn sign_pdf_bytes_with_windows_certificate(
     pdf_bytes: &[u8],
     certificate_thumbprint: &str,
     appearance_style: PdfSignatureAppearance,
+    position: Option<PdfSignaturePosition>,
 ) -> anyhow::Result<Vec<u8>> {
     use std::os::windows::process::CommandExt;
 
@@ -443,6 +455,7 @@ fn sign_pdf_bytes_with_windows_certificate(
         &certificate.subject,
         &certificate.issuer,
         appearance_style,
+        position,
     )?;
     let revision = prepare_pdf_signing_revision(
         prepared.prepared_pdf(),
@@ -519,6 +532,7 @@ fn sign_pdf_bytes_with_windows_certificate(
     _pdf_bytes: &[u8],
     _certificate_thumbprint: &str,
     _appearance_style: PdfSignatureAppearance,
+    _position: Option<PdfSignaturePosition>,
 ) -> anyhow::Result<Vec<u8>> {
     anyhow::bail!("Chỉ hỗ trợ ký số bằng chứng thư Windows trên máy Windows.")
 }
@@ -831,6 +845,7 @@ fn prepare_visible_windows_signature(
     signer_name: &str,
     issuer: &str,
     appearance_style: PdfSignatureAppearance,
+    position: Option<PdfSignaturePosition>,
 ) -> anyhow::Result<(oxidize_pdf::signatures::PreparedSignature, usize)> {
     use oxidize_pdf::signatures::{
         prepare_incremental_signature_with_appearance, SignatureAppearance,
@@ -846,16 +861,22 @@ fn prepare_visible_windows_signature(
     let available_height = (top - bottom - margin * 2.0).max(1.0);
     let (desired_width, desired_height): (f64, f64) = match appearance_style {
         PdfSignatureAppearance::CompactRight => (115.0, 36.0),
-        PdfSignatureAppearance::DetailedLeft => (110.0, 50.0),
+        PdfSignatureAppearance::DetailedLeft => (220.0, 99.0),
     };
-    let signature_width = desired_width.min(available_width);
-    let signature_height = desired_height.min(available_height);
-    let (signature_left, signature_bottom) = match appearance_style {
-        PdfSignatureAppearance::CompactRight => (
-            right - margin - signature_width,
-            top - margin - signature_height,
-        ),
-        PdfSignatureAppearance::DetailedLeft => (left + margin, top - margin - signature_height),
+    let scale = (available_width / desired_width).min(available_height / desired_height).min(1.0);
+    let signature_width = desired_width * scale;
+    let signature_height = desired_height * scale;
+    let position = position.unwrap_or(match appearance_style {
+        PdfSignatureAppearance::CompactRight => PdfSignaturePosition::TopRight,
+        PdfSignatureAppearance::DetailedLeft => PdfSignaturePosition::TopLeft,
+    });
+    let signature_left = match position {
+        PdfSignaturePosition::TopLeft | PdfSignaturePosition::BottomLeft => left + margin,
+        PdfSignaturePosition::TopRight | PdfSignaturePosition::BottomRight => right - margin - signature_width,
+    };
+    let signature_bottom = match position {
+        PdfSignaturePosition::TopLeft | PdfSignaturePosition::TopRight => top - margin - signature_height,
+        PdfSignaturePosition::BottomLeft | PdfSignaturePosition::BottomRight => bottom + margin,
     };
     let page_count = document.page_count()?.max(1);
     let mut options = SignaturePreparationOptions::invisible("LinguaHubSignature");
@@ -1038,33 +1059,28 @@ $singleLineFormat = [System.Drawing.StringFormat]::new()
 $singleLineFormat.Trimming = [System.Drawing.StringTrimming]::EllipsisCharacter
 $singleLineFormat.LineAlignment = [System.Drawing.StringAlignment]::Center
 $singleLineFormat.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
-$light = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(244, 248, 253))
-$blue = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(45, 105, 220))
-$ink = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(29, 48, 74))
-$muted = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(75, 91, 111))
-$border = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(132, 151, 176), 3)
-$divider = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(196, 207, 221), 2)
-$nameFont = [System.Drawing.Font]::new('Segoe UI', 42, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-$titleFont = [System.Drawing.Font]::new('Segoe UI', 25, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-$signerFont = [System.Drawing.Font]::new('Segoe UI', 21, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-$detailFont = [System.Drawing.Font]::new('Segoe UI', 20, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-$issuerFont = [System.Drawing.Font]::new('Segoe UI', 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-$leftSigner = $env:LH_STAMP_SIGNER -replace ' - ', "`n"
-$graphics.FillRectangle($light, 0, 0, 360, $height)
-$graphics.FillRectangle($blue, 0, 0, 9, $height)
-$graphics.DrawLine($divider, 362, 25, 362, $height - 25)
-$graphics.DrawRectangle($border, 2, 2, $width - 5, $height - 5)
-$graphics.DrawString(
-  $leftSigner, $nameFont, $ink,
-  [System.Drawing.RectangleF]::new(26, 24, 310, 312), $leftFormat
-)
-$graphics.DrawString('DIGITALLY SIGNED BY', $titleFont, $ink, [System.Drawing.RectangleF]::new(385, 24, 390, 38), $singleLineFormat)
-$graphics.DrawString($env:LH_STAMP_SIGNER, $signerFont, $ink, [System.Drawing.RectangleF]::new(385, 62, 390, 34), $singleLineFormat)
-$graphics.DrawString(('Date: ' + $env:LH_STAMP_DATE), $detailFont, $muted, [System.Drawing.RectangleF]::new(385, 103, 390, 34), $singleLineFormat)
-$graphics.DrawString(('Issuer: ' + $env:LH_STAMP_ISSUER), $issuerFont, $muted, [System.Drawing.RectangleF]::new(385, 144, 390, 34), $singleLineFormat)
-$graphics.DrawString('Windows digital certificate', $detailFont, $muted, [System.Drawing.RectangleF]::new(385, 185, 390, 34), $singleLineFormat)
-$graphics.DrawString('Application: LinguaHub Office', $detailFont, $muted, [System.Drawing.RectangleF]::new(385, 226, 390, 34), $singleLineFormat)
-$graphics.DrawString(('Trang / Page: 1/' + $env:LH_STAMP_PAGE), $detailFont, $muted, [System.Drawing.RectangleF]::new(385, 267, 390, 34), $singleLineFormat)
+$ink = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(26, 32, 39))
+$muted = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(58, 66, 75))
+$divider = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(184, 192, 199), 2)
+$titleFont = [System.Drawing.Font]::new('Segoe UI', 29, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+$detailFont = [System.Drawing.Font]::new('Segoe UI', 25, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+$nameRect = [System.Drawing.RectangleF]::new(24, 32, 338, 294)
+$nameFormat = [System.Drawing.StringFormat]::new($format)
+$nameFormat.Alignment = [System.Drawing.StringAlignment]::Center
+$nameSize = 52
+do {
+  $nameFont = [System.Drawing.Font]::new('Segoe UI', $nameSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  $measured = $graphics.MeasureString($env:LH_STAMP_SIGNER, $nameFont, [int]$nameRect.Width)
+  if ($measured.Height -le $nameRect.Height -or $nameSize -le 24) { break }
+  $nameFont.Dispose()
+  $nameSize -= 2
+} while ($true)
+$graphics.DrawLine($divider, 380, 42, 380, $height - 42)
+$graphics.DrawString($env:LH_STAMP_SIGNER, $nameFont, $ink, $nameRect, $nameFormat)
+$graphics.DrawString('Digitally signed', $titleFont, $ink, [System.Drawing.RectangleF]::new(407, 48, 369, 44), $singleLineFormat)
+$graphics.DrawString(('Date: ' + $env:LH_STAMP_DATE), $detailFont, $muted, [System.Drawing.RectangleF]::new(407, 103, 369, 58), $leftFormat)
+$graphics.DrawString(('Issuer: ' + $env:LH_STAMP_ISSUER), $detailFont, $muted, [System.Drawing.RectangleF]::new(407, 171, 369, 102), $leftFormat)
+$graphics.DrawString(('Page 1 / ' + $env:LH_STAMP_PAGE), $detailFont, $muted, [System.Drawing.RectangleF]::new(407, 288, 369, 42), $singleLineFormat)
 $rectangle = [System.Drawing.Rectangle]::new(0, 0, $width, $height)
 $locked = $bitmap.LockBits(
   $rectangle, [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
@@ -1418,6 +1434,26 @@ pub fn is_supported(path: &Path) -> bool {
 /// Detect file extension from raw bytes (magic bytes / container inspection) when the filename
 /// from ERP was visually truncated (e.g. `1. 06.11.2026-PYC TENTAMUS - DP...`).
 pub fn detect_extension_from_bytes(bytes: &[u8], file_name_hint: &str, mime_hint: &str) -> String {
+    // ERP labels can be truncated or carry a stale extension. Prefer a
+    // recognizable PDF or image header before using the displayed filename.
+    if bytes.starts_with(b"%PDF-") {
+        return "pdf".to_owned();
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "jpg".to_owned();
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return "png".to_owned();
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return "gif".to_owned();
+    }
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        return "tiff".to_owned();
+    }
+    if bytes.starts_with(b"BM") && bytes.len() >= 14 {
+        return "bmp".to_owned();
+    }
     // 1. Check if file_name_hint already ends with a supported extension
     if let Some(ext) = Path::new(file_name_hint.trim_end_matches('.'))
         .extension()
@@ -1430,17 +1466,8 @@ pub fn detect_extension_from_bytes(bytes: &[u8], file_name_hint: &str, mime_hint
     }
 
     // 2. Magic bytes inspection
-    if bytes.starts_with(b"%PDF-") {
-        return "pdf".to_owned();
-    }
     if bytes.starts_with(b"{\\rtf") {
         return "rtf".to_owned();
-    }
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return "jpg".to_owned();
-    }
-    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
-        return "png".to_owned();
     }
     // ZIP / OOXML container (docx, xlsx, pptx)
     if bytes.starts_with(&[b'P', b'K', 0x03, 0x04]) {
@@ -1584,6 +1611,7 @@ pub fn normalize_settings(input: PdfExportSettings) -> anyhow::Result<PdfExportS
         auto_sign: input.auto_sign,
         certificate_thumbprint,
         signature_appearance: input.signature_appearance,
+        signature_position: input.signature_position,
     })
 }
 
@@ -1899,6 +1927,7 @@ fn convert_resolved_file(
                 &pdf,
                 thumbprint,
                 settings.signature_appearance,
+                settings.signature_position,
             )?;
             anyhow::ensure!(!signed.is_empty(), "Windows trả về PDF đã ký rỗng.");
             atomic_replace_file(&target, &signed)
@@ -2257,7 +2286,8 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
     }
   }
 
-  installHook(window);
+  const capture = false;
+  if (capture) installHook(window);
 
   const docs = [];
   const collectDocuments = (doc, depth = 0) => {
@@ -2267,7 +2297,7 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
     for (const frame of Array.from(doc.querySelectorAll('iframe'))) {
       try {
         if (!frame.contentWindow || !frame.contentDocument) continue;
-        installHook(frame.contentWindow);
+        if (capture) installHook(frame.contentWindow);
         collectDocuments(frame.contentDocument, depth + 1);
       } catch (_) {}
     }
@@ -2310,10 +2340,11 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
       }
       // Inspect Angular Ivy __ngContext__ if available
       const ctx = cur.__ngContext__;
-      if (ctx) {
+      if (ctx && /(?:\.{3}|…)$/u.test(displayText)) {
         const visited = new Set();
+        let remaining = 120;
         const scan = (item, depth) => {
-          if (!item || depth > 3 || visited.has(item)) return null;
+          if (--remaining < 0 || !item || depth > 3 || visited.has(item)) return null;
           if (typeof item === 'string') {
             const s = norm(item);
             if (
@@ -2351,11 +2382,12 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
 
   const attachments = [];
   const seenKeys = new Map();
-  const elementAttachmentIds = new WeakMap();
-  let attCounter = 0;
+  const elementAttachmentIds = window.__lhAttachmentIds ||= new WeakMap();
+  window.__lhAttachmentCounter ||= 0;
   let frameIndex = 0;
 
   const attachmentControl = 'a, button, [role="button"], [role="link"], [onclick], [ng-click], [data-ng-click], [tabindex]';
+  const fileNameHint = /\.(?:pdf|docx?|xlsx?|xlsm|pptx?|csv|jpe?g|png|bmp|gif|tiff?|zip)(?=$|[\s(?…])|(?:\.{3}|…)$/i;
   const isLabelMatch = (txt) =>
     /^Chọn\s*files?\b/i.test(txt) ||
     /^(File|Tệp)\s*đính\s*kèm$/i.test(txt) ||
@@ -2363,8 +2395,32 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
 
   for (const doc of docs) {
     frameIndex += 1;
+    // Arito's uploader renders a clickable div, with the full name in xfilename.
+    const nativeFiles = doc.querySelectorAll('.ajax-file-upload-filename.link-download[xfilename]');
+    const nativeRows = new Set();
+    for (const file of nativeFiles) {
+      const fullName = norm(file.getAttribute('xfilename'));
+      if (!fullName || !file.getClientRects().length) continue;
+      const row = file.closest('.form-group, [class*="css4control-xfile"]');
+      const rowClass = row ? row.className : '';
+      const field = String(rowClass).match(/css4control-xfile[_-](cs|nm)\b/i)?.[1];
+      const label = row && Array.from(row.querySelectorAll('label, span, div')).find(el =>
+        el.childElementCount <= 1 && /^Chọn\s*files?\s*(?:CS|NM)\s*:?$/i.test(norm(el.textContent)),
+      );
+      const fieldLabel = field ? 'Chọn files ' + field.toUpperCase() :
+        label ? norm(label.textContent).replace(/\s*:\s*$/, '') : 'File đính kèm';
+      let id = elementAttachmentIds.get(file);
+      if (!id) {
+        id = `lh-att-${frameIndex}-${++window.__lhAttachmentCounter}`;
+        elementAttachmentIds.set(file, id);
+        file.setAttribute('data-lh-erp-att', id);
+      }
+      attachments.push({ id, fieldLabel, displayName: fullName, fullName, href: null });
+      if (row) nativeRows.add(row);
+    }
     const allEls = Array.from(doc.querySelectorAll('label, span, div, td, th, p, strong, b'));
     const labelEls = allEls.filter((el) => {
+      if (el.childElementCount > 2) return false;
       const t = norm(el.textContent);
       if (!t || t.length > 40) return false;
       if (!isLabelMatch(t)) return false;
@@ -2377,41 +2433,32 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
     });
 
     for (const lbl of labelEls) {
+      if (Array.from(nativeRows).some(row => row.contains(lbl))) continue;
       const fieldLabel = norm(lbl.textContent);
-      // Walk to the nearest row that contains an actionable attachment. ERP
-      // renders the field label and its files in separate cells, and often
-      // nests several identical label wrappers; text length alone stops too
-      // early and makes the whole field look empty.
+      // Scan this field and its adjacent file cells only.
+      const otherLabel = other => other !== lbl && !lbl.contains(other) && !other.contains(lbl);
       let row = lbl.parentElement;
-      let scopeRoots = [];
-      while (row && row !== doc.body) {
-        const containsOtherField = labelEls.some((other) =>
-          other !== lbl && row.contains(other) && norm(other.textContent) !== fieldLabel,
-        );
-        if (containsOtherField) break;
-
-        const possibleFiles = Array.from(row.querySelectorAll('a, button, [role="button"], [role="link"], span, div'));
-        const hasActionableFile = possibleFiles.some((cand) => {
-          if (cand === lbl || lbl.contains(cand) || cand.contains(lbl)) return false;
-          const text = cleanAttachmentText(cand.textContent);
-          if (!text || text.length < 3 || text.length > 220 || text === fieldLabel) return false;
-          if (ICON_WORDS.has(text.toLowerCase()) || /^(Chọn|Tải lên|Upload|Xóa|Thêm|Lý do điều chỉnh)$/i.test(text)) return false;
-          const link = cand.matches('a[href], [role="link"]') || cand.closest('a[href]') || cand.querySelector('a[href]');
-          let cursor = '';
-          try { cursor = doc.defaultView.getComputedStyle(cand).cursor || ''; } catch (_) {}
-          return Boolean(link) || cand.matches('button, [role="button"]') ||
-            Boolean(cand.getAttribute('onclick')) || cand.hasAttribute('tabindex') || cursor === 'pointer';
-        });
-        if (hasActionableFile) {
-          scopeRoots = [row];
-          break;
-        }
+      while (row && row.parentElement && row.parentElement !== doc.body) {
+        if (fileNameHint.test(norm(row.textContent)) ||
+            labelEls.some(other => otherLabel(other) && row.parentElement.contains(other))) break;
         row = row.parentElement;
+      }
+      const scopeRoots = [];
+      if (row && !labelEls.some(other => otherLabel(other) && row.contains(other))) scopeRoots.push(row);
+      if (!scopeRoots.length || !fileNameHint.test(norm(row.textContent))) {
+        const start = scopeRoots.length ? row : lbl;
+        for (let sibling = start.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+          if (labelEls.some(other => sibling.contains(other))) break;
+          scopeRoots.push(sibling);
+        }
       }
 
       for (const root of scopeRoots) {
-        const candidates = Array.from(root.querySelectorAll('a, button, [role="button"], span, div'));
+        const candidates = Array.from(root.querySelectorAll(attachmentControl + ', span, div'));
+        if (root.matches(attachmentControl)) candidates.unshift(root);
         for (const cand of candidates) {
+          if (cand.closest('.ajax-file-upload-statusbar') ||
+              cand.querySelector('.ajax-file-upload-filename.link-download[xfilename]')) continue;
           if (cand === lbl || lbl.contains(cand) || cand.contains(lbl)) continue;
           if (cand.tagName === 'INPUT' || cand.tagName === ' SVG' || cand.tagName === 'MAT-ICON' || cand.tagName === 'I') continue;
 
@@ -2425,7 +2472,8 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
           if (!rawText || rawText.length < 3 || rawText.length > 220) continue;
           if (rawText === fieldLabel || ICON_WORDS.has(rawText.toLowerCase())) continue;
           if (/^(Chọn|Tải lên|Upload|Xóa|Thêm|Lý do điều chỉnh)$/i.test(rawText)) continue;
-          const directFileControl = cand.matches('a, button, [role="button"]');
+          const directFileControl = cand.matches(attachmentControl);
+          if (!directFileControl && !fileNameHint.test(rawText)) continue;
           const nestedControls = cand.querySelectorAll('a, button, [role="link"], [role="button"]');
           const fileNameParts = rawText.match(/\.[a-z0-9]{2,5}(?=$|[\s,;)]|×)/gi) || [];
           // Parent wrappers can contain several real attachment links plus ERP action labels.
@@ -2440,11 +2488,7 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
 
           let id = elementAttachmentIds.get(cand);
           if (!id) {
-            const existingId = cand.getAttribute('data-lh-erp-att') || '';
-            const isOldGeneratedId = /^lh-att-\d+(?:-\d+)?$/.test(existingId);
-            id = existingId && !isOldGeneratedId
-              ? existingId
-              : `lh-att-${frameIndex}-${++attCounter}`;
+            id = `lh-att-${frameIndex}-${++window.__lhAttachmentCounter}`;
             elementAttachmentIds.set(cand, id);
             cand.setAttribute('data-lh-erp-att', id);
           }
@@ -2486,200 +2530,6 @@ pub const ERP_SCAN_SCRIPT: &str = r#"
           attachments.push(attachment);
         }
       }
-    }
-  }
-
-  // Some ARITO screens render attachment labels in table cells and the linked
-  // filenames in a sibling column. Recover clickable items whose nearest small
-  // ancestor identifies exactly one attachment field.
-  const fieldPattern = /Chọn\s*files?\s*(?:CS|NM)?|(?:File|Tệp)\s*đính\s*kèm/gi;
-  const extractSingleFieldLabel = (text) => {
-    const matches = Array.from(norm(text).matchAll(fieldPattern), (match) => norm(match[0]));
-    const unique = new Map(matches.map((match) => [match.toLowerCase(), match]));
-    return unique.size === 1 ? unique.values().next().value : '';
-  };
-  const fallbackControls = new Set([
-    'cloud_upload', 'upload', 'upload_file', 'download', 'file_download',
-    'cancel', 'done', 'xóa', 'thêm', 'tải lên', 'tải xuống', '...', '×',
-  ]);
-  for (const doc of docs) {
-    const localFrameIndex = docs.indexOf(doc) + 1;
-    const possibleFiles = Array.from(
-      doc.querySelectorAll('a, button, [role="button"], [role="link"], [onclick], [tabindex], span, div'),
-    );
-    for (const cand of possibleFiles) {
-      if (cand.matches('span, div') &&
-          cand.querySelector('a, button, [role="button"], [role="link"], [onclick], [tabindex]')) continue;
-      const rawText = cleanAttachmentText(cand.textContent);
-      if (!rawText || rawText.length < 6 || rawText.length > 220) continue;
-      if (fallbackControls.has(rawText.toLowerCase())) continue;
-      if (/^(Chọn|Tải lên|Tải xuống|Upload|Download|Xóa|Thêm|Lý do điều chỉnh)$/i.test(rawText)) continue;
-
-      const anchor = cand.matches('a[href]') ? cand : cand.querySelector('a[href]') || cand.closest('a[href]');
-      let cursor = '';
-      try { cursor = doc.defaultView.getComputedStyle(cand).cursor || ''; } catch (_) {}
-      const actionable = Boolean(anchor) || cand.matches('button, [role="button"], [role="link"]') ||
-        Boolean(cand.getAttribute('onclick')) || cand.hasAttribute('tabindex') || cursor === 'pointer';
-      if (!actionable) continue;
-
-      let fieldLabel = '';
-      let ancestor = cand.parentElement;
-      for (let depth = 0; ancestor && ancestor !== doc.body && depth < 10; depth++, ancestor = ancestor.parentElement) {
-        fieldLabel = extractSingleFieldLabel(ancestor.textContent);
-        if (fieldLabel) break;
-      }
-      if (!fieldLabel) continue;
-
-      const rect = cand.getBoundingClientRect ? cand.getBoundingClientRect() : { width: 10, height: 10 };
-      if (rect.width < 4 || rect.height < 4) continue;
-      const linkHref = anchor ? norm(anchor.getAttribute('href')) : '';
-      const hrefAllowed = linkHref && linkHref !== '#' && !linkHref.startsWith('#') &&
-        !/^(?:javascript|mailto):/i.test(linkHref);
-      const href = anchor && hrefAllowed ? anchor.href || linkHref : null;
-      let id = elementAttachmentIds.get(cand);
-      if (!id) {
-        const existingId = cand.getAttribute('data-lh-erp-att') || '';
-        const isOldGeneratedId = /^lh-att-\d+(?:-\d+)?$/.test(existingId);
-        id = existingId && !isOldGeneratedId
-          ? existingId
-          : 'lh-att-' + localFrameIndex + '-' + (++attCounter);
-        elementAttachmentIds.set(cand, id);
-        cand.setAttribute('data-lh-erp-att', id);
-      }
-      const fullName = cleanAttachmentText(recoverFullNameFromNg(cand, rawText));
-      const attachment = {
-        id,
-        fieldLabel,
-        displayName: rawText,
-        fullName,
-        href: href && !href.startsWith('javascript:') ? href : null,
-      };
-      Object.defineProperty(attachment, '_actionable', { value: true });
-      const dedupeKey = fieldLabel.toLowerCase() + '|' + (fullName || rawText).toLowerCase();
-      const group = seenKeys.get(dedupeKey) || [];
-      const duplicateIndex = group.find((index) => {
-        const existingHref = attachments[index].href;
-        return !existingHref || !attachment.href || existingHref === attachment.href;
-      });
-      if (duplicateIndex !== undefined) continue;
-      seenKeys.set(dedupeKey, [...group, attachments.length]);
-      attachments.push(attachment);
-    }
-  }
-
-  // Some ERP versions place CS/NM labels and links in separate table columns,
-  // while their shared wrapper contains both labels. In that layout, ancestor
-  // text is ambiguous even though the visible filename is aligned with one
-  // label. Associate the filename with the nearest visible attachment label.
-  const attachmentFilePattern = /\.(?:pdf|docx?|xlsx?|pptx?|csv|jpe?g|png|tiff?|zip)(?:$|[?#\s×])/i;
-  for (const doc of docs) {
-    const positionLabels = Array.from(doc.querySelectorAll('label, span, div, td, th, p, strong, b'))
-      .map((el) => ({ el, text: norm(el.textContent), rect: el.getBoundingClientRect() }))
-      .filter(({ el, text, rect }) => {
-        if (!/^(?:Chọn\s*files?\s*(?:CS|NM)?|(?:File|Tệp)\s*đính\s*kèm|Đính\s*kèm\s*(?:CS|NM|file|tệp))\s*:?$/i.test(text) ||
-            rect.width < 4 || rect.height < 4) return false;
-        const parentText = norm(el.parentElement && el.parentElement.textContent);
-        return !(/^File\s*đính\s*kèm$/i.test(text) && /Thông\s*tin\s*quản\s*lý/i.test(parentText));
-      });
-    const uniqueLabels = [];
-    const seenLabels = new Set();
-    for (const label of positionLabels) {
-      const key = `${label.text.toLowerCase()}|${Math.round(label.rect.left)}|${Math.round(label.rect.top)}`;
-      if (!seenLabels.has(key)) {
-        seenLabels.add(key);
-        uniqueLabels.push(label);
-      }
-    }
-
-    const controls = Array.from(doc.querySelectorAll(attachmentControl + ', span, div'));
-    for (const cand of controls) {
-      // Arito versions sometimes render a file as a blue, pointer-cursor span
-      // without an anchor or role attribute. Ignore wrapper nodes when they
-      // contain a more specific control; the leaf still receives the ID used
-      // by the in-memory ERP reader below.
-      if (cand.querySelector(attachmentControl) ||
-          (!cand.matches(attachmentControl) && cand.closest(attachmentControl))) continue;
-      const anchor = cand.matches('a') ? cand : cand.closest('a') || cand.querySelector('a');
-      const rawText = cleanAttachmentText(
-        norm(cand.textContent) ||
-        (anchor && (
-          norm(anchor.textContent) ||
-          norm(anchor.getAttribute('title')) ||
-          norm(anchor.getAttribute('aria-label'))
-        )) ||
-        norm(cand.getAttribute('title')) ||
-        norm(cand.getAttribute('aria-label')) ||
-        '',
-      );
-      if (!rawText || rawText.length < 6 || rawText.length > 220) continue;
-      if (fallbackControls.has(rawText.toLowerCase()) || ICON_WORDS.has(rawText.toLowerCase())) continue;
-      if (
-        isLabelMatch(rawText) ||
-        /^(Chọn|Tải lên|Tải xuống|Upload|Download|Xóa|Thêm|Lý do điều chỉnh)$/i.test(rawText)
-      ) continue;
-
-      const fullName = cleanAttachmentText(recoverFullNameFromNg(cand, rawText));
-      const rawHref = anchor ? norm(anchor.getAttribute('href')) : '';
-      const hrefAllowed = rawHref && rawHref !== '#' && !rawHref.startsWith('#') && !/^(?:javascript|mailto):/i.test(rawHref);
-      const href = anchor && hrefAllowed ? anchor.href || rawHref : null;
-      let cursor = '';
-      try { cursor = doc.defaultView.getComputedStyle(cand).cursor || ''; } catch (_) {}
-      const actionable = cand.matches(attachmentControl) || cursor === 'pointer';
-      const looksLikeFile = attachmentFilePattern.test(fullName || rawText) ||
-        Boolean(anchor && anchor.hasAttribute('download')) ||
-        Boolean(href && /(?:download|attachment|upload|\/file\b)/i.test(href));
-      // Some ARITO controls show a truncated name such as "92.PYC - Vinh..."
-      // while the extension and download URL exist only in Angular state. A
-      // real anchor beside a visible attachment-field label is enough evidence;
-      // the proximity check below keeps normal navigation links out of results.
-      const explicitFileLink = Boolean(anchor) && (cand.tagName === 'A' || anchor.tagName === 'A');
-      const truncatedName = /(?:\.{3}|…)$/u.test(rawText);
-      if (!actionable || (!looksLikeFile && !explicitFileLink && !truncatedName)) continue;
-
-      const rect = cand.getBoundingClientRect();
-      if (rect.width < 4 || rect.height < 4) continue;
-      let nearest = null;
-      for (const label of uniqueLabels) {
-        const verticalGap = Math.max(0, label.rect.top - rect.bottom, rect.top - label.rect.bottom);
-        const horizontalGap = Math.max(0, label.rect.left - rect.right, rect.left - label.rect.right);
-        // ERP fields are vertically stacked; do not attach a file to a distant
-        // label elsewhere in the form just because it is the only text match.
-        if (verticalGap > 72 || rect.left + 8 < label.rect.left) continue;
-        const score = verticalGap * 12 + horizontalGap;
-        if (!nearest || score < nearest.score) nearest = { label, score };
-        else if (score === nearest.score && label.text.toLowerCase() !== nearest.label.text.toLowerCase()) {
-          nearest = { ...nearest, ambiguous: true };
-        }
-      }
-      if (!nearest || nearest.ambiguous) continue;
-
-      let id = elementAttachmentIds.get(cand);
-      if (!id) {
-        const existingId = cand.getAttribute('data-lh-erp-att') || '';
-        const isOldGeneratedId = /^lh-att-\d+(?:-\d+)?$/.test(existingId);
-        id = existingId && !isOldGeneratedId
-          ? existingId
-          : 'lh-att-' + (docs.indexOf(doc) + 1) + '-' + (++attCounter);
-        elementAttachmentIds.set(cand, id);
-        cand.setAttribute('data-lh-erp-att', id);
-      }
-      if (attachments.some((attachment) => attachment.id === id)) continue;
-      const attachment = {
-        id,
-        fieldLabel: nearest.label.text,
-        displayName: rawText,
-        fullName,
-        href: href && !href.startsWith('javascript:') ? href : null,
-      };
-      const dedupeKey = `${attachment.fieldLabel.toLowerCase()}|${(fullName || rawText).toLowerCase()}`;
-      const group = seenKeys.get(dedupeKey) || [];
-      const duplicateIndex = group.find((index) => {
-        const existingHref = attachments[index].href;
-        return !existingHref || !attachment.href || existingHref === attachment.href;
-      });
-      if (duplicateIndex !== undefined) continue;
-      seenKeys.set(dedupeKey, [...group, attachments.length]);
-      attachments.push(attachment);
     }
   }
 
@@ -2740,7 +2590,7 @@ pub fn erp_trigger_download_script(att_id: &str, display_name: &str, href: Optio
     let frames = [];
     try {{ frames = Array.from(win.document.querySelectorAll('iframe')); }} catch (_) {{}}
     for (const frame of frames) {{
-      try {{ if (frame.contentWindow) collectWindows(frame.contentWindow, depth + 1); }} catch (_) {{}}
+      try {{ if (frame.contentDocument && frame.contentWindow) collectWindows(frame.contentWindow, depth + 1); }} catch (_) {{}}
     }}
   }};
   collectWindows(window);
@@ -2772,7 +2622,7 @@ pub fn erp_trigger_download_script(att_id: &str, display_name: &str, href: Optio
     }}
   }};
 
-  const action = el.matches && el.matches('a, button, [role="button"]')
+  const action = el.matches && el.matches('a, button, [role="button"], .ajax-file-upload-filename.link-download[xfilename]')
     ? el
     : el.closest('a, button, [role="button"]') || el.querySelector('a, button, [role="button"]') || el;
 
@@ -3505,6 +3355,7 @@ try {
             "Test Signer",
             "CN=Test Issuer",
             PdfSignatureAppearance::CompactRight,
+            None,
         )
         .unwrap();
         let revision = prepare_pdf_signing_revision(
@@ -3546,21 +3397,17 @@ try {
 
     #[test]
     fn erp_attachment_dom_ids_are_unique_across_frames() {
-        assert!(ERP_SCAN_SCRIPT.contains("const elementAttachmentIds = new WeakMap()"));
+        assert!(ERP_SCAN_SCRIPT.contains("window.__lhAttachmentIds ||= new WeakMap()"));
         assert!(ERP_SCAN_SCRIPT.contains("let frameIndex = 0"));
-        assert!(ERP_SCAN_SCRIPT.contains("lh-att-${frameIndex}-${++attCounter}"));
+        assert!(ERP_SCAN_SCRIPT.contains("lh-att-${frameIndex}-${++window.__lhAttachmentCounter}"));
         assert!(ERP_SCAN_SCRIPT.contains("cursor === 'pointer'"));
         assert!(ERP_SCAN_SCRIPT
             .contains("attachment._actionable && !attachments[duplicateIndex]._actionable"));
     }
 
     #[test]
-    fn erp_attachment_scan_matches_files_to_the_nearest_visible_field_label() {
-        assert!(ERP_SCAN_SCRIPT.contains("const attachmentFilePattern"));
-        assert!(ERP_SCAN_SCRIPT.contains("verticalGap > 72"));
-        assert!(ERP_SCAN_SCRIPT.contains("nearest.label.text"));
-        assert!(ERP_SCAN_SCRIPT.contains("cursor === 'pointer'"));
-        assert!(ERP_SCAN_SCRIPT.contains("!actionable || (!looksLikeFile"));
+    fn erp_attachment_scan_stays_inside_the_attachment_field() {
+        assert!(ERP_SCAN_SCRIPT.contains("if (labelEls.some(other => sibling.contains(other))) break"));
     }
 
     #[test]
@@ -3693,7 +3540,7 @@ $signedCms.CheckSignature($true)
         ] {
             eprintln!("Signing {suffix} test PDF...");
             let signed =
-                sign_pdf_bytes_with_windows_certificate(&base, &requested_thumbprint, appearance)
+                sign_pdf_bytes_with_windows_certificate(&base, &requested_thumbprint, appearance, None)
                     .unwrap();
             let output = folder.join(format!("signature-verification-{suffix}-{}.pdf", now_ms()));
             fs::write(&output, &signed).unwrap();
@@ -3740,11 +3587,11 @@ $signedCms.CheckSignature($true)
                         "detailed signature should be on the left: {rect:?}"
                     );
                     assert!(
-                        rect[1] > 700.0,
+                        rect[3] > 800.0,
                         "detailed signature should be at the top: {rect:?}"
                     );
                     assert!(
-                        (105.0..=115.0).contains(&width) && (47.0..=53.0).contains(&height),
+                        (219.0..=221.0).contains(&width) && (98.0..=100.0).contains(&height),
                         "detailed signature should match the reference proportions: {rect:?}"
                     );
                 }

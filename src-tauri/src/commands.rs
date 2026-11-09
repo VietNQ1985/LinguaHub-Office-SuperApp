@@ -568,9 +568,13 @@ pub async fn erp_bookmarklet_launch(
 pub async fn pdf_export_scan_erp_page(
     webview: Webview,
     app: AppHandle,
+    tab_id: String,
 ) -> Res<crate::pdf_export::ErpPageSnapshot> {
     trusted(&webview)?;
-    let views = workspace::erp_views(&app);
+    let views: Vec<_> = workspace::erp_views(&app)
+        .into_iter()
+        .filter(|(id, _)| id == &tab_id)
+        .collect();
     if views.is_empty() {
         return Ok(crate::pdf_export::ErpPageSnapshot::default());
     }
@@ -624,7 +628,6 @@ pub async fn pdf_export_convert_erp_attachment(
     att_id: String,
     display_name: String,
     file_name: String,
-    href: Option<String>,
 ) -> Res<crate::pdf_export::PdfExportResult> {
     trusted(&webview)?;
     let settings = ensure_pdf_export_signing_settings(&state).await?;
@@ -635,41 +638,56 @@ pub async fn pdf_export_convert_erp_attachment(
     let view = views
         .iter()
         .find(|(id, _)| !tab_id.is_empty() && id == &tab_id)
-        .or_else(|| views.first())
         .map(|(_, v)| v.clone())
         .ok_or("Chưa mở tab Arito ERP nào.")?;
 
     // Re-scan live DOM so a stale attachment URL (for example href="#", which
     // resolves to the ERP form itself) cannot be mistaken for the file.
-    let live_snapshot = wv::eval_json(&view, crate::pdf_export::ERP_SCAN_SCRIPT)
+    let capture_scan = crate::pdf_export::ERP_SCAN_SCRIPT
+        .replacen("const capture = false;", "const capture = true;", 1);
+    let live_snapshot = wv::eval_json(&view, &capture_scan)
         .await
         .ok();
+    let normalize_name = |name: &str| {
+        name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    };
+    let requested_name = normalize_name(&display_name);
     let live_attachment = live_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot["attachments"].as_array())
         .and_then(|attachments| {
+            let matches_name = |attachment: &Value| {
+                ["displayName", "fullName"].into_iter().any(|key| {
+                    let Some(name) = attachment[key].as_str() else { return false };
+                    let name = normalize_name(name);
+                    if name == requested_name {
+                        return true;
+                    }
+                    let prefix = name
+                        .strip_suffix("...")
+                        .or_else(|| name.strip_suffix('…'))
+                        .map(str::trim_end);
+                    prefix.is_some_and(|prefix| prefix.len() >= 12 && requested_name.starts_with(prefix))
+                })
+            };
             attachments
                 .iter()
-                .find(|attachment| attachment["id"].as_str() == Some(att_id.as_str()))
+                .find(|attachment| {
+                    attachment["id"].as_str() == Some(att_id.as_str()) && matches_name(attachment)
+                })
                 .or_else(|| {
-                    attachments.iter().find(|attachment| {
-                        attachment["displayName"].as_str() == Some(display_name.as_str())
-                            || attachment["fullName"].as_str() == Some(display_name.as_str())
-                    })
+                    let mut matches = attachments.iter().filter(|attachment| matches_name(attachment));
+                    let first = matches.next()?;
+                    matches.next().is_none().then_some(first)
                 })
         });
-    let live_href = live_attachment
-        .and_then(|attachment| attachment["href"].as_str())
-        .map(ToOwned::to_owned);
-    let effective_href = if live_attachment.is_some() {
-        live_href
-    } else {
-        href
-    };
+    let live_attachment = live_attachment
+        .ok_or("Danh sách tệp trên phiếu đã thay đổi. Anh bấm quét lại rồi chọn tệp cần lưu.")?;
+    let effective_href = live_attachment["href"].as_str();
     let trigger_script = crate::pdf_export::erp_trigger_download_script(
-        &att_id,
+        live_attachment["id"].as_str().unwrap_or(&att_id),
         &display_name,
-        effective_href.as_deref(),
+        effective_href,
     );
     let trigger_result = wv::eval_json(&view, &trigger_script).await.map_err(fail)?;
     if trigger_result["clicked"] != true {

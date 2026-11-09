@@ -9,9 +9,11 @@ export type PdfExportSettings = {
   autoSign: boolean
   certificateThumbprint: string | null
   signatureAppearance: PdfSignatureAppearance
+  signaturePosition?: PdfSignaturePosition | null
 }
 
 export type PdfSignatureAppearance = 'compactRight' | 'detailedLeft'
+export type PdfSignaturePosition = 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight'
 
 export type WindowsPdfSigningCertificate = {
   thumbprint: string
