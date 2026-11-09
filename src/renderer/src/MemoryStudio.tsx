@@ -44,8 +44,8 @@ function downloadJson(name: string, value: unknown) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function MemoryStudio() {
-  const [tab, setTab] = useState<MemoryTab>('prompts')
+export function MemoryStudio({ initialTab = 'prompts' }: { initialTab?: MemoryTab }) {
+  const [tab, setTab] = useState<MemoryTab>(initialTab)
   const [projects, setProjects] = useState<MemoryProject[]>([])
   const [scopes, setScopes] = useState<MemoryScope[]>([])
   const [projectId, setProjectId] = useState('')
@@ -79,6 +79,8 @@ export function MemoryStudio() {
   const memoryRecordCount = projects.reduce((total, project) => total + project.records, 0)
   const canEditPrompt = Boolean(selectedPrompt && selectedPrompt.id !== 'memory-core')
   const filteredRecords = records
+
+  useEffect(() => setTab(initialTab), [initialTab])
 
   const loadSources = async () => {
     const [nextProjects, nextScopes] = await Promise.all([
@@ -387,15 +389,17 @@ export function MemoryStudio() {
 
   const citationRows = useMemo(() => prepared?.sources ?? [], [prepared])
 
-  if (loading) return <section className="memory-studio" aria-busy="true"><div className="memory-loading">Đang mở AI Memory…</div></section>
+  if (loading) return <section className="memory-studio" aria-busy="true"><div className="memory-loading">{initialTab === 'prompts' ? 'Đang mở Prompt Studio…' : 'Đang mở AI Memory…'}</div></section>
 
   return <section className="memory-studio" aria-labelledby="office-memory-title">
     <header className="memory-page-heading">
-      <div><span className="office-eyebrow">BỘ NHỚ DỰ ÁN · CHỌN LỌC</span><h2 id="office-memory-title"><BrainCircuit size={24} aria-hidden="true"/> AI Memory</h2><p>Tìm lại nội dung trong các cuộc trò chuyện anh đã chủ động chọn lưu.</p></div>
-      <div className="memory-live-counts" aria-label="Trạng thái nguồn bộ nhớ"><span><strong>{enabledScopeCount}</strong> nguồn đang lưu</span><span><strong>{memoryRecordCount}</strong> bản ghi cục bộ</span></div>
+      <div><span className="office-eyebrow">{tab === 'prompts' ? 'KHAI BÁO VÀ QUẢN LÝ PROMPT' : 'BỘ NHỚ DỰ ÁN · CHỌN LỌC'}</span><h2 id="office-memory-title">{tab === 'prompts' ? <><BookOpenText size={24} aria-hidden="true"/> Prompt Studio</> : <><BrainCircuit size={24} aria-hidden="true"/> AI Memory</>}</h2><p>{tab === 'prompts' ? 'Tạo prompt theo tác vụ, thêm quy tắc, quản lý phiên bản và áp dụng vào nguồn của dự án.' : 'Tìm lại nội dung trong các cuộc trò chuyện anh đã chủ động chọn lưu.'}</p></div>
+      {tab === 'prompts'
+        ? <div className="memory-live-counts" aria-label="Trạng thái thư viện Prompt"><span><strong>{prompts.length}</strong> prompt</span><span><strong>{projects.length}</strong> dự án</span></div>
+        : <div className="memory-live-counts" aria-label="Trạng thái nguồn bộ nhớ"><span><strong>{enabledScopeCount}</strong> nguồn đang lưu</span><span><strong>{memoryRecordCount}</strong> bản ghi cục bộ</span></div>}
     </header>
 
-    <div className="memory-privacy-note"><ShieldCheck size={17} aria-hidden="true"/><span>Chỉ nguồn được anh bật mới được lưu. Dữ liệu nằm trong SQLite riêng của Office trên máy này; SQLite hiện chưa được mã hoá. Quyền đọc chat và quyền gửi AI ra cloud vẫn được hỏi riêng.</span></div>
+    <div className="memory-privacy-note"><ShieldCheck size={17} aria-hidden="true"/><span>{tab === 'prompts' ? 'Prompt được lưu cục bộ, có lịch sử phiên bản và phạm vi dùng chung hoặc theo dự án. Khi chạy, nội dung bộ nhớ chỉ lấy từ nguồn anh đã bật; quyền xử lý cloud vẫn được hỏi riêng.' : 'Chỉ nguồn được anh bật mới được lưu. Dữ liệu nằm trong SQLite riêng của Office trên máy này; SQLite hiện chưa được mã hoá. Quyền đọc chat và quyền gửi AI ra cloud vẫn được hỏi riêng.'}</span></div>
 
     <div className="memory-tabs" role="tablist" aria-label="Khu vực AI Memory">
       <button type="button" role="tab" aria-selected={tab === 'sources'} className={tab === 'sources' ? 'active' : ''} onClick={() => setTab('sources')}><ShieldCheck size={16}/> Nguồn bộ nhớ</button>

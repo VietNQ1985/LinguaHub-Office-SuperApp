@@ -184,10 +184,7 @@ pub async fn download_and_launch_installer(download_url: &str) -> anyhow::Result
         .await
         .map_err(|e| anyhow::anyhow!("Không tải được bộ cài từ GitHub: {e}"))?;
     if !response.status().is_success() {
-        anyhow::bail!(
-            "Tải bộ cài thất bại (HTTP {}).",
-            response.status().as_u16()
-        );
+        anyhow::bail!("Tải bộ cài thất bại (HTTP {}).", response.status().as_u16());
     }
 
     let bytes = response.bytes().await?;

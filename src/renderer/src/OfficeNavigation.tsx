@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BrainCircuit,
+  BookOpenText,
   Bell,
   BriefcaseBusiness,
   CalendarDays,
@@ -25,6 +26,7 @@ export type OfficeArea =
   | 'meetings'
   | 'projects'
   | 'memory'
+  | 'prompts'
   | 'documents'
   | 'translation'
   | 'assistant'
@@ -37,6 +39,7 @@ export const OFFICE_NAV_ITEMS: Array<{ id: OfficeArea; label: string; hint: stri
   { id: 'meetings', label: 'Lịch & cuộc họp', hint: 'Teams, Zoom, Google Meet', icon: CalendarDays },
   { id: 'projects', label: 'ERP Projects', hint: 'Không gian ERP', icon: BriefcaseBusiness },
   { id: 'memory', label: 'AI Memory', hint: 'Bộ nhớ AI có chọn lọc', icon: BrainCircuit },
+  { id: 'prompts', label: 'Prompt Studio', hint: 'Trung tâm prompt dùng chung và theo dự án', icon: BookOpenText },
   { id: 'documents', label: 'Tài liệu', hint: 'Tệp trên máy và theo Sample ID', icon: Files },
   { id: 'translation', label: 'Dịch thuật', hint: 'Dịch tin nhắn, email và cuộc họp', icon: Languages },
   { id: 'assistant', label: 'Trợ lý AI', hint: 'Gợi ý phản hồi và hỗ trợ', icon: Sparkles },
@@ -85,7 +88,7 @@ export function OfficeSidebar({
         {!collapsed && <span>Quản lý ứng dụng</span>}
       </button>
       <div className="office-version" title="LinguaHub Office SuperApp · © 2026 Viet Nguyen Quoc">
-      {collapsed ? <span aria-label="Phiên bản 0.4.2">0.4.2</span> : <><span>LinguaHub Office SuperApp · v0.4.2</span><small>© 2026 Viet Nguyen Quoc</small></>}
+      {collapsed ? <span aria-label="Phiên bản 0.4.15">0.4.15</span> : <><span>LinguaHub Office SuperApp · v0.4.15</span><small>© 2026 Viet Nguyen Quoc</small></>}
       </div>
     </div>
   </aside>

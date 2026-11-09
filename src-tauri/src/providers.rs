@@ -156,7 +156,8 @@ pub async fn gemini_respond(
         "contents": [{ "role": "user", "parts": [{ "text": input }] }],
         "generationConfig": { "responseMimeType": if instructions.contains("Return JSON") { "application/json" } else { "text/plain" } },
     });
-    let endpoint = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+    let endpoint =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
     let mut last_status = 0u16;
     for attempt in 0..3 {
         if attempt > 0 {

@@ -115,6 +115,11 @@ test('ERP SampleFilePanel runs 5 distinct tools, gates Cloud AI by consent, and 
     await act(async () => root.render(createElement(SampleFilePanel)))
     await act(async () => new Promise(resolve => setTimeout(resolve, 15)))
 
+    const sampleTab = [...container.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(b =>
+      b.textContent?.includes('Sample ID'),
+    )!
+    await act(async () => sampleTab.click())
+
     const searchInput = container.querySelector('#erp-sample-panel-id') as HTMLInputElement
     await act(async () => setInputValue(dom, searchInput, 'V26-04169'))
 

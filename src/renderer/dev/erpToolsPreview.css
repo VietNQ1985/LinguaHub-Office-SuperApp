@@ -1,0 +1,13 @@
+.erp-preview { color:#18324c; background:#f6f8fc; min-height:100vh; padding:20px; font-family:Segoe UI,sans-serif; }
+.erp-preview header { max-width:1400px; margin:0 auto 18px; }
+.erp-preview h1 { margin:0 0 8px; font-size:24px; }
+.erp-preview header p { max-width:1000px; line-height:1.5; color:#566a80; }
+.erp-preview label { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.erp-preview select { max-width:350px; padding:8px; border:1px solid #ced9e4; border-radius:8px; background:white; }
+.erp-preview main { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:18px; max-width:1400px; margin:auto; align-items:start; }
+.erp-preview iframe { border:1px solid #d9e2ed; border-radius:12px; width:100%; height:760px; background:white; }
+.erp-preview aside { border:1px solid #d9e2ed; border-radius:12px; padding:16px; background:white; }
+.erp-preview .settings-actions { display:grid; gap:8px; margin:12px 0; }
+.erp-preview button { padding:12px; border-radius:9px; border:1px solid #bbd0eb; color:#1859bf; background:#eef5ff; cursor:pointer; }
+.erp-preview button:disabled { opacity:.55; cursor:wait; }
+@media(max-width:800px) { .erp-preview { padding:12px; } .erp-preview main { grid-template-columns:1fr; } .erp-preview aside { grid-row:1; } .erp-preview iframe { height:680px; } }

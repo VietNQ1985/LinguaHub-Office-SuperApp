@@ -22,7 +22,8 @@ import {
   type ErpSampleFolder,
   type ErpToolId,
 } from './erpFileTools'
-import { PdfExportPanel } from './PdfExportPanel'
+import { PdfExportPanel, PdfExportSettingsForm } from './PdfExportPanel'
+import { ErpBookmarkletPanel } from './ErpBookmarkletPanel'
 
 type SampleSearchResult = {
   sampleId: string
@@ -31,6 +32,28 @@ type SampleSearchResult = {
   scannedEntries: number
   truncated: boolean
   unavailableRoots: string[]
+}
+
+type ErpPanelSection = 'attachments' | 'sample' | 'bookmarklets' | 'settings'
+const ERP_PANEL_SECTION_KEY = 'linguahub.erpPanel.section.v1'
+
+type ActiveErpTab = { id: string; name: string; address: string } | null
+type ErpCredentialStatus = { origin: string; saved: boolean; username: string | null }
+type ErpCredentialProposal = { tabId: string; origin: string; username: string; password: string }
+
+function errorText(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === 'string' && error) return error
+  return fallback
+}
+
+function loadErpPanelSection(): ErpPanelSection {
+  try {
+    const saved = localStorage.getItem(ERP_PANEL_SECTION_KEY)
+    return saved === 'sample' || saved === 'bookmarklets' || saved === 'settings' ? saved : 'attachments'
+  } catch {
+    return 'attachments'
+  }
 }
 
 function formatModelShort(name: string): string {
@@ -49,9 +72,11 @@ function isCloudModel(model: string): boolean {
 export function SampleFilePanel({
   onSwitchToAi,
   onOpenSettings,
+  activeTab = null,
 }: {
   onSwitchToAi?: () => void
   onOpenSettings?: () => void
+  activeTab?: ActiveErpTab
 } = {}) {
   const [roots, setRoots] = useState<string[]>([])
   const [templateFolder, setTemplateFolder] = useState<string | null>(null)
@@ -60,6 +85,13 @@ export function SampleFilePanel({
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [searching, setSearching] = useState(false)
   const [status, setStatus] = useState('Nhập mã mẫu (Sample ID) để tra cứu và xử lý bộ hồ sơ ERP.')
+  const [activePanelSection, setActivePanelSection] = useState<ErpPanelSection>(loadErpPanelSection)
+  const [erpCredentialStatus, setErpCredentialStatus] = useState<ErpCredentialStatus | null>(null)
+  const [erpCredentialUsername, setErpCredentialUsername] = useState('')
+  const [erpCredentialPassword, setErpCredentialPassword] = useState('')
+  const [erpCredentialBusy, setErpCredentialBusy] = useState(false)
+  const [erpCredentialNotice, setErpCredentialNotice] = useState('')
+  const [pendingErpCredential, setPendingErpCredential] = useState<ErpCredentialProposal | null>(null)
 
   // AI & Cloud permission state
   const [model, setModel] = useState('')
@@ -146,6 +178,138 @@ export function SampleFilePanel({
       window.removeEventListener('linguahub:settings-updated', onSettingsOrPerms)
     }
   }, [refreshConfigAndAi])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ERP_PANEL_SECTION_KEY, activePanelSection)
+    } catch {
+      // The panel still works when browser storage is unavailable.
+    }
+  }, [activePanelSection])
+
+  useEffect(() => {
+    let current = true
+    setErpCredentialStatus(null)
+    setErpCredentialUsername('')
+    setErpCredentialPassword('')
+    setErpCredentialNotice('')
+    if (!activeTab) return () => { current = false }
+    void window.lingua.getErpCredentialStatus(activeTab.id).then(
+      saved => {
+        if (!current) return
+        setErpCredentialStatus(saved)
+        setErpCredentialUsername(saved.username || '')
+      },
+      error => {
+        if (current) setErpCredentialNotice(errorText(error, 'Không đọc được trạng thái lưu mật khẩu.'))
+      },
+    )
+    return () => { current = false }
+  }, [activeTab?.id, activeTab?.address])
+
+  useEffect(() => {
+    setPendingErpCredential(null)
+    let expiry: number | undefined
+    const receiveProposal = (event: Event) => {
+      const proposal = (event as CustomEvent<ErpCredentialProposal>).detail
+      if (
+        !activeTab ||
+        proposal?.tabId !== activeTab.id ||
+        !proposal.origin.startsWith('https://') ||
+        typeof proposal.password !== 'string' ||
+        !proposal.password
+      ) {
+        return
+      }
+      window.clearTimeout(expiry)
+      setPendingErpCredential(proposal)
+      expiry = window.setTimeout(() => setPendingErpCredential(null), 60_000)
+    }
+    window.addEventListener('linguahub:erp-credential-proposal', receiveProposal)
+    return () => {
+      window.removeEventListener('linguahub:erp-credential-proposal', receiveProposal)
+      window.clearTimeout(expiry)
+    }
+  }, [activeTab?.id, activeTab?.address])
+
+  const saveErpPassword = async () => {
+    if (!activeTab || !erpCredentialUsername.trim() || !erpCredentialPassword) return
+    setErpCredentialBusy(true)
+    setErpCredentialNotice('')
+    try {
+      const saved = await window.lingua.saveErpCredential(
+        activeTab.id,
+        erpCredentialUsername,
+        erpCredentialPassword,
+      )
+      setErpCredentialStatus(saved)
+      setErpCredentialUsername(saved.username || erpCredentialUsername)
+      setErpCredentialPassword('')
+      setErpCredentialNotice('Đã lưu trong Kho thông tin xác thực Windows cho tài khoản này.')
+    } catch (error) {
+      setErpCredentialNotice(errorText(error, 'Không lưu được mật khẩu ERP.'))
+    } finally {
+      setErpCredentialBusy(false)
+    }
+  }
+
+  const saveProposedErpPassword = async () => {
+    if (!activeTab || !pendingErpCredential || pendingErpCredential.tabId !== activeTab.id) return
+    setErpCredentialBusy(true)
+    setErpCredentialNotice('')
+    try {
+      const saved = await window.lingua.saveErpCredential(
+        activeTab.id,
+        pendingErpCredential.username,
+        pendingErpCredential.password,
+      )
+      setErpCredentialStatus(saved)
+      setErpCredentialUsername(saved.username || '')
+      setPendingErpCredential(null)
+      setErpCredentialNotice('Đã lưu thông tin đăng nhập trong Kho thông tin xác thực Windows.')
+    } catch (error) {
+      setErpCredentialNotice(errorText(error, 'Không lưu được mật khẩu ERP.'))
+    } finally {
+      setErpCredentialBusy(false)
+    }
+  }
+
+  const fillErpPassword = async () => {
+    if (!activeTab) return
+    setErpCredentialBusy(true)
+    setErpCredentialNotice('')
+    try {
+      const result = await window.lingua.fillErpCredential(activeTab.id)
+      setErpCredentialNotice(
+        result.usernameFilled
+          ? 'Đã điền tài khoản và mật khẩu. Kiểm tra thông tin rồi tự bấm Đăng nhập.'
+          : 'Đã điền mật khẩu. Trang không có ô tên đăng nhập phù hợp; kiểm tra rồi tự bấm Đăng nhập.',
+      )
+    } catch (error) {
+      setErpCredentialNotice(errorText(error, 'Không điền được mật khẩu ERP.'))
+    } finally {
+      setErpCredentialBusy(false)
+    }
+  }
+
+  const deleteErpPassword = async () => {
+    if (!activeTab) return
+    setErpCredentialBusy(true)
+    setErpCredentialNotice('')
+    try {
+      await window.lingua.deleteErpCredential(activeTab.id)
+      setErpCredentialStatus(previous =>
+        previous ? { ...previous, saved: false, username: null } : previous,
+      )
+      setErpCredentialUsername('')
+      setErpCredentialPassword('')
+      setErpCredentialNotice('Đã xóa mật khẩu khỏi Kho thông tin xác thực Windows.')
+    } catch (error) {
+      setErpCredentialNotice(errorText(error, 'Không xóa được mật khẩu ERP.'))
+    } finally {
+      setErpCredentialBusy(false)
+    }
+  }
 
   const selectedFiles = useMemo(() => {
     if (!result?.files.length) return []
@@ -537,32 +701,22 @@ export function SampleFilePanel({
 
   return (
     <section className="sample-file-panel" aria-labelledby="sample-file-panel-title">
-      {/* Top Header & Quick Mode Switcher */}
+      {/* Feature identity and quick switch to the general AI assistant. */}
       <div className="erp-panel-header">
         <div className="erp-panel-title-row">
-          <div>
-            <span className="office-eyebrow">TRỢ LÝ HỒ SƠ & TỆP ERP</span>
-            <h2 id="sample-file-panel-title">Xử lý Tệp Sample ID</h2>
-          </div>
+          <h2 id="sample-file-panel-title">Tiện ích ERP</h2>
           <div className="erp-panel-top-actions">
             {onSwitchToAi && (
               <button
                 type="button"
                 className="secondary-button erp-switch-ai-btn"
                 onClick={onSwitchToAi}
+                aria-label="Trợ lý AI"
                 title="Chuyển sang Trợ lý AI dịch thuật, soạn tin và tóm tắt"
               >
-                🤖 Trợ lý AI
+                🤖
               </button>
             )}
-            <button
-              type="button"
-              className="secondary-button erp-settings-btn"
-              onClick={openSettingsCenter}
-              title="Mở trung tâm Cài đặt tập trung (Nguồn tệp ERP, Mô hình AI, Quyền Cloud)"
-            >
-              ⚙️ Cài đặt
-            </button>
           </div>
         </div>
 
@@ -582,14 +736,197 @@ export function SampleFilePanel({
                   : 'Chưa cấp quyền gửi lên Cloud AI. Bấm để cấp quyền.'
               }
             >
-              {cloudGranted ? '☁️ Cloud: Đã cấp (Thu hồi)' : '🔒 Cloud: Chưa cấp (Bấm cấp quyền)'}
+              {cloudGranted ? '☁ Cloud · Bật' : '🔒 Cloud · Cấp quyền'}
             </button>
           ) : (
-            <span className="ai-trust-pill ai-trust-pill-local">🛡️ Xử lý cục bộ trên máy</span>
+            <span className="ai-trust-pill ai-trust-pill-local" title="Dữ liệu được xử lý trên máy này">🛡 Cục bộ</span>
           )}
         </div>
       </div>
 
+      <nav className="erp-panel-nav" role="tablist" aria-label="Chức năng ERP">
+        {([
+          ['attachments', '📎', 'Tệp ERP', 'Tệp đính kèm trên phiếu ERP và lưu PDF'],
+          ['sample', '🔎', 'Sample ID', 'Tra cứu và xử lý tệp theo mã mẫu'],
+          ['bookmarklets', '⚡', 'M1A · M7K', 'Mở công cụ đối chiếu M1A và Dashboard M7K'],
+          ['settings', '⚙', 'Cài đặt', 'Thư mục tải về, thư mục lưu PDF và mẫu tên tệp'],
+        ] as const).map(([section, icon, label, tooltip]) => (
+          <button
+            key={section}
+            type="button"
+            role="tab"
+            aria-selected={activePanelSection === section}
+            className={activePanelSection === section ? 'erp-panel-nav-tab active' : 'erp-panel-nav-tab'}
+            title={tooltip}
+            onClick={() => setActivePanelSection(section)}
+          >
+            <span aria-hidden="true">{icon}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {pendingErpCredential && pendingErpCredential.tabId === activeTab?.id && (
+        <section className="erp-password-save-offer" role="dialog" aria-label="Lưu mật khẩu ERP">
+          <div className="erp-password-save-offer-head">
+            <strong>{erpCredentialStatus?.saved ? 'Cập nhật mật khẩu?' : 'Lưu mật khẩu?'}</strong>
+            <button
+              type="button"
+              className="text-button"
+              aria-label="Đóng lời nhắc lưu mật khẩu"
+              onClick={() => setPendingErpCredential(null)}
+            >
+              ×
+            </button>
+          </div>
+          <small className="erp-password-origin">{pendingErpCredential.origin}</small>
+          {erpCredentialStatus?.saved && (
+            <small>Đang lưu tài khoản {erpCredentialStatus.username || 'đã lưu'} cho website này.</small>
+          )}
+          <label htmlFor="erp-password-save-proposal-user">Tài khoản</label>
+          <input
+            id="erp-password-save-proposal-user"
+            type="text"
+            autoComplete="username"
+            value={pendingErpCredential.username}
+            disabled={erpCredentialBusy}
+            onChange={event =>
+              setPendingErpCredential(previous =>
+                previous ? { ...previous, username: event.target.value } : previous,
+              )
+            }
+          />
+          <small>Mật khẩu chỉ được lưu nếu anh chọn nút bên dưới.</small>
+          <div className="erp-password-actions">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={erpCredentialBusy || !pendingErpCredential.username.trim()}
+              onClick={() => void saveProposedErpPassword()}
+            >
+              {erpCredentialBusy ? 'Đang lưu…' : erpCredentialStatus?.saved ? 'Cập nhật mật khẩu' : 'Lưu mật khẩu'}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={erpCredentialBusy}
+              onClick={() => setPendingErpCredential(null)}
+            >
+              Không lưu
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activePanelSection === 'attachments' && (
+        <PdfExportPanel
+          key={activeTab?.id}
+          activeTabId={activeTab?.id ?? ''}
+          sampleId={result?.sampleId || sampleId.trim()}
+          sampleFiles={selectedFiles}
+          onOpenSettings={() => setActivePanelSection('settings')}
+        />
+      )}
+
+      {activePanelSection === 'bookmarklets' && <ErpBookmarkletPanel />}
+
+      {activePanelSection === 'settings' && (
+        <section className="erp-panel-settings" aria-label="Cài đặt ERP">
+          <div className="erp-panel-settings-head">
+            <h3>Cài đặt tệp ERP</h3>
+            {onOpenSettings && (
+              <button
+                type="button"
+                className="secondary-button"
+                title="Mở mô hình AI và quyền Cloud"
+                onClick={openSettingsCenter}
+              >
+                Cài đặt chung
+              </button>
+            )}
+          </div>
+          <section className="erp-password-card" aria-label="Lưu mật khẩu tab ERP">
+            <div className="erp-password-card-head">
+              <h4>Mật khẩu tab ERP</h4>
+              <span className={erpCredentialStatus?.saved ? 'erp-password-state saved' : 'erp-password-state'}>
+                {erpCredentialStatus?.saved ? 'Đã lưu' : activeTab ? 'Chưa lưu' : 'Chưa mở tab'}
+              </span>
+            </div>
+            {activeTab ? (
+              <>
+                <small className="erp-password-origin" title={erpCredentialStatus?.origin || activeTab.name}>
+                  {erpCredentialStatus?.origin || activeTab.name}
+                </small>
+                <label htmlFor="erp-password-username">Tài khoản</label>
+                <input
+                  id="erp-password-username"
+                  type="text"
+                  autoComplete="username"
+                  value={erpCredentialUsername}
+                  disabled={erpCredentialBusy || !erpCredentialStatus}
+                  onChange={event => setErpCredentialUsername(event.target.value)}
+                  placeholder="Tên đăng nhập"
+                />
+                <label htmlFor="erp-password-value">Mật khẩu</label>
+                <input
+                  id="erp-password-value"
+                  type="password"
+                  autoComplete="new-password"
+                  value={erpCredentialPassword}
+                  disabled={erpCredentialBusy || !erpCredentialStatus}
+                  onChange={event => setErpCredentialPassword(event.target.value)}
+                  placeholder={erpCredentialStatus?.saved ? 'Nhập mật khẩu mới để cập nhật' : 'Nhập mật khẩu'}
+                />
+                <div className="erp-password-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={
+                      erpCredentialBusy ||
+                      !erpCredentialStatus ||
+                      !erpCredentialUsername.trim() ||
+                      !erpCredentialPassword
+                    }
+                    onClick={() => void saveErpPassword()}
+                  >
+                    {erpCredentialBusy ? 'Đang xử lý…' : 'Lưu mật khẩu'}
+                  </button>
+                  {erpCredentialStatus?.saved && (
+                    <>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={erpCredentialBusy}
+                        onClick={() => void fillErpPassword()}
+                      >
+                        Điền vào tab
+                      </button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={erpCredentialBusy}
+                        onClick={() => void deleteErpPassword()}
+                      >
+                        Xóa
+                      </button>
+                    </>
+                  )}
+                </div>
+                <small className="helper-text">
+                  Lưu trong Kho thông tin xác thực Windows của tài khoản này. “Điền vào tab” không tự gửi biểu mẫu.
+                </small>
+              </>
+            ) : (
+              <p className="helper-text">Mở website ERP trong tab để lưu hoặc điền thông tin đăng nhập.</p>
+            )}
+            {erpCredentialNotice && <p className="helper-text erp-password-notice" role="status">{erpCredentialNotice}</p>}
+          </section>
+          <PdfExportSettingsForm compact />
+        </section>
+      )}
+
+      {activePanelSection === 'sample' && (
+        <>
       {/* Step 1: Sample ID Lookup */}
       <div className="sample-panel-search-card">
         <div className="sample-panel-meta-row">
@@ -597,7 +934,7 @@ export function SampleFilePanel({
             Nguồn tìm kiếm: <strong>{roots.length}</strong> thư mục gốc · Mẫu:{' '}
             <strong>{templateFolder ? templateFolder.split(/[/\\]/).filter(Boolean).pop() : 'Tất cả'}</strong>
           </small>
-          <button type="button" className="text-button" onClick={openSettingsCenter}>
+          <button type="button" className="text-button" onClick={() => setActivePanelSection('settings')}>
             Chỉnh nguồn tệp
           </button>
         </div>
@@ -1051,7 +1388,8 @@ export function SampleFilePanel({
         </div>
       </div>
 
-      <PdfExportPanel sampleId={result?.sampleId || sampleId.trim()} sampleFiles={selectedFiles} />
+        </>
+      )}
     </section>
   )
 }

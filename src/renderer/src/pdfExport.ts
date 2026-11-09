@@ -6,6 +6,24 @@ export type PdfExportSettings = {
   nameTemplate: string
   autoConvert: boolean
   overwrite: boolean
+  autoSign: boolean
+  certificateThumbprint: string | null
+  signatureAppearance: PdfSignatureAppearance
+  signaturePosition?: PdfSignaturePosition | null
+}
+
+export type PdfSignatureAppearance = 'compactRight' | 'detailedLeft'
+export type PdfSignaturePosition = 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight'
+
+export type WindowsPdfSigningCertificate = {
+  thumbprint: string
+  subject: string
+  issuer: string
+  expiresAt: string
+  algorithm: string
+  friendlyName?: string
+  preferredForCurrentUser?: boolean
+  pdfSigningCapable?: boolean
 }
 
 export type PdfExportResult = {
@@ -28,6 +46,55 @@ export type ErpPageSnapshot = {
   sampleId: string
   customer: string
   attachments: ErpPageAttachment[]
+}
+
+/** Remove ERP chip numbering, file-size badges, and action text included by broad DOM containers. */
+export function cleanErpAttachmentName(raw: string): string {
+  return raw
+    .replace(/^\s*\[(?:Chọn\s*files?|File\s*đính\s*kèm)[^\]]*\]\s*/i, '')
+    .replace(/\s*[×✕✖✗]\s*(?:(?:cancel|done|download)\s*)+[×✕✖✗]?\s*$/i, '')
+    .replace(/\s*(?:(?:cancel|done|download)\s*)+\s*$/i, '')
+    .replace(/\s+\(\s*\d+(?:[.,]\d+)?\s*(?:B|KB|MB|GB)\s*\)\s*$/i, '')
+    .replace(/^\s*\d{1,3}\.\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Normalize and collapse repeated DOM nodes that describe the same ERP attachment. */
+export function dedupeErpPageAttachments(attachments: ErpPageAttachment[]): ErpPageAttachment[] {
+  const result: ErpPageAttachment[] = []
+  const positions = new Map<string, number[]>()
+
+  for (const attachment of attachments) {
+    const displayName = cleanErpAttachmentName(attachment.displayName)
+    const fullName = cleanErpAttachmentName(attachment.fullName) || displayName
+    if (!displayName && !fullName) continue
+
+    const normalized: ErpPageAttachment = {
+      ...attachment,
+      fieldLabel: attachment.fieldLabel.replace(/\s+/g, ' ').trim(),
+      displayName: displayName || fullName,
+      fullName,
+    }
+    const key = `${normalized.fieldLabel.toLocaleLowerCase()}|${fullName.toLocaleLowerCase()}`
+    const group = positions.get(key) || []
+    const existingIndex = group.find(index => {
+      const existingHref = result[index].href
+      return !existingHref || !normalized.href || existingHref === normalized.href
+    })
+    if (existingIndex === undefined) {
+      group.push(result.length)
+      positions.set(key, group)
+      result.push(normalized)
+      continue
+    }
+
+    const existing = result[existingIndex]
+    // Keep the actionable node when a wrapper and a nested file chip were both detected.
+    if (!existing.href && normalized.href) result[existingIndex] = normalized
+  }
+
+  return result
 }
 
 export const DEFAULT_PDF_TEMPLATE = '{tenGoc}'
@@ -56,6 +123,9 @@ export function defaultPdfSettings(): PdfExportSettings {
     nameTemplate: DEFAULT_PDF_TEMPLATE,
     autoConvert: false,
     overwrite: false,
+    autoSign: false,
+    certificateThumbprint: null,
+    signatureAppearance: 'compactRight',
   }
 }
 
@@ -132,7 +202,7 @@ export function fileFingerprint(file: { path: string; modifiedAt: number | null;
 }
 
 export function erpAttachmentFingerprint(tabId: string, att: ErpPageAttachment): string {
-  return `${tabId}|${att.fieldLabel}|${att.fullName || att.displayName}`
+  return `${tabId}|${att.fieldLabel.trim().toLocaleLowerCase()}|${cleanErpAttachmentName(att.fullName || att.displayName).toLocaleLowerCase()}`
 }
 
 export function loadSeenFiles(key = SEEN_KEY): Set<string> {

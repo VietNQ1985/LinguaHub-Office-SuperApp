@@ -70,35 +70,30 @@ pub fn validate(input: &str) -> anyhow::Result<PathBuf> {
 
 pub async fn open(app: &AppHandle, input: &str) -> anyhow::Result<bool> {
     let path = validate(input)?;
-    let executable = path
-        .extension()
-        .and_then(|v| v.to_str())
-        .map(|v| v.eq_ignore_ascii_case("exe"))
-        .unwrap_or(false);
-    let title = if executable {
-        "Cho phép chạy chương trình?"
-    } else {
-        "Mở đường dẫn trên Windows?"
-    };
-    let detail = if executable {
-        "Chỉ chấp thuận nếu anh biết chương trình này. Không truyền tham số hoặc lệnh từ website."
-    } else {
-        "Windows mở bằng ứng dụng mặc định. Ổ mạng cần được kết nối trong phiên Windows hiện tại."
-    };
-    let (answer, _) = dialog::ask(
-        app,
-        Ask::question(title, path.to_string_lossy(), detail, ["Hủy", "Mở"]),
-    )
-    .await;
-    if answer != 1 {
-        return Ok(false);
-    }
     let check = path.clone();
     anyhow::ensure!(
         tokio::task::spawn_blocking(move || check.exists()).await?,
         "Không tìm thấy đường dẫn hoặc anh chưa có quyền truy cập ổ mạng"
     );
+    let executable = path
+        .extension()
+        .and_then(|v| v.to_str())
+        .map(|v| v.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false);
     if executable {
+        let (answer, _) = dialog::ask(
+            app,
+            Ask::question(
+                "Cho phép chạy chương trình?",
+                path.to_string_lossy(),
+                "Chỉ chấp thuận nếu anh biết chương trình này. Không truyền tham số hoặc lệnh từ website.",
+                ["Hủy", "Mở"],
+            ),
+        )
+        .await;
+        if answer != 1 {
+            return Ok(false);
+        }
         std::process::Command::new(&path)
             .current_dir(path.parent().unwrap_or(std::path::Path::new("C:\\")))
             .spawn()?;

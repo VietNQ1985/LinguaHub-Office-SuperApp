@@ -163,7 +163,18 @@ pub fn inspect_file(path: &str, allowed_roots: &[String]) -> anyhow::Result<Samp
 
     let text_ext = matches!(
         extension.as_str(),
-        "txt" | "csv" | "tsv" | "json" | "xml" | "md" | "log" | "html" | "htm" | "ini" | "yaml" | "yml"
+        "txt"
+            | "csv"
+            | "tsv"
+            | "json"
+            | "xml"
+            | "md"
+            | "log"
+            | "html"
+            | "htm"
+            | "ini"
+            | "yaml"
+            | "yml"
     );
     let decoded = if buffer.starts_with(&[0xFF, 0xFE]) && buffer.len() >= 2 {
         let units: Vec<u16> = buffer[2..]
@@ -224,7 +235,11 @@ pub fn inspect_file(path: &str, allowed_roots: &[String]) -> anyhow::Result<Samp
     } else {
         format!(
             "[Tệp định dạng .{} · Dung lượng {} byte]\nChuỗi ký tự nhận diện trong tệp:\n{}",
-            if extension.is_empty() { "bin" } else { &extension },
+            if extension.is_empty() {
+                "bin"
+            } else {
+                &extension
+            },
             size,
             tokens.join(" · ")
         )

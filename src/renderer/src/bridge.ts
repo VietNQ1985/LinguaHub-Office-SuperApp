@@ -22,6 +22,13 @@ function subscribe<T>(event: string, handler: (payload: T) => void) {
 
 const shortcutListeners = new Set<(action: string) => void>()
 for(const event of ['web-tab-created','web-tab-updated','web-tab-navigated'])void listen(event,message=>window.dispatchEvent(new CustomEvent('linguahub:'+event,{detail:message.payload})))
+void listen<{ tabId: string; origin: string; username: string; password: string }>(
+  'erp-credential-proposal',
+  message =>
+    window.dispatchEvent(
+      new CustomEvent('linguahub:erp-credential-proposal', { detail: message.payload }),
+    ),
+)
 void listen<string>('local-open-error', message => window.dispatchEvent(new CustomEvent('linguahub:local-error', {detail:message.payload})))
 const queuedShortcuts: string[] = []
 void listen<string>('app-shortcut', message => {
@@ -41,6 +48,7 @@ window.addEventListener('keydown', event => {
 type Service = 'whatsapp' | 'teams' | 'zalo' | 'zoom' | 'meet'
 
 window.lingua = {
+  launchErpBookmarklet: (tool: 'm1a' | 'm7k') => call('erp_bookmarklet_launch', {tool}),
   pickLocalPath: (folder: boolean) => call('local_path_pick', {folder}),
   setUiFormOpen: (open: boolean) => call('ui_form_open', {open}),
   openLocalPath: (path: string) => call('local_path_open', {path}),
@@ -53,11 +61,23 @@ window.lingua = {
   inspectSampleFile: (path: string) => call('sample_file_inspect', {path}),
   getPdfExportSettings: () => call('pdf_export_settings'),
   setPdfExportSettings: settings => call('pdf_export_settings_set', {settings}),
+  listPdfSigningCertificates: () => call('pdf_export_signing_certificates'),
+  createPdfSigningCertificate: () => call('pdf_export_create_signing_certificate'),
   listPdfExportSource: () => call('pdf_export_list_source'),
   convertToPdf: (path: string, fileName: string) => call('pdf_export_convert', {path, fileName}),
-  scanErpPageAttachments: () => call('pdf_export_scan_erp_page'),
-  convertErpAttachmentToPdf: (tabId: string, attId: string, displayName: string, fileName: string) =>
-    call('pdf_export_convert_erp_attachment', {tabId, attId, displayName, fileName}),
+  scanErpPageAttachments: (tabId: string) => call('pdf_export_scan_erp_page', { tabId }),
+  convertErpAttachmentToPdf: (
+    tabId: string,
+    attId: string,
+    displayName: string,
+    fileName: string,
+    href?: string | null,
+  ) => call('pdf_export_convert_erp_attachment', {tabId, attId, displayName, fileName, href}),
+  getErpCredentialStatus: (tabId: string) => call('erp_credential_status', { tabId }),
+  saveErpCredential: (tabId: string, username: string, password: string) =>
+    call('erp_credential_save', { tabId, username, password }),
+  deleteErpCredential: (tabId: string) => call('erp_credential_delete', { tabId }),
+  fillErpCredential: (tabId: string) => call('erp_credential_fill', { tabId }),
   checkAppUpdate: () => call('app_update_check'),
   installAppUpdate: (downloadUrl: string) => call('app_update_install', {downloadUrl}),
   webTab: (id: string, address: string, close = false) => call('web_tab_open', { id, address, close }),
