@@ -1,92 +1,155 @@
-# Android interpreter architecture and feasibility (Issue #8)
+# Android Interpreter: architecture and feasibility (Issue #8)
 
-**Status:** design and desktop-side feasibility review; Android build and physical-device checks remain unverified.
-**Date:** 2026-11-10
-**Scope:** Issue #8 only. This document does not implement the Android shell, capture pipeline, STT, translation, TTS, Copilot, or memory work tracked by Issues #9–#17.
+**Status:** architecture decision recorded; Android compilation and device behavior are blocked by missing local tooling/device.
+**Updated:** 2026-11-10
+**Scope:** Issue #8 only. This PR does not implement interpreter functionality or start Issues #9–#17.
 
-## Decision
+## Decision: two independently released applications
 
-Keep the existing Windows application as its own Tauri target and add a separately identified Android interpreter target in a later issue. Reuse the React UI primitives and platform-neutral TypeScript policies only after isolating a focused mobile experience. Reuse Rust provider/translation logic only behind explicit portable interfaces and after Android cross-compilation; do not carry over Windows desktop modules or their assumptions.
+Keep **LinguaHub Office SuperApp for Windows** and **LinguaHub AI Interpreter for Android** as separate applications. Do not convert the Windows product into a cross-platform app. Windows remains at the repository root during this incremental transition; Android will be added as a separate app when the Issue #9 shell is implemented. The two apps must have separate bundle/application IDs, build configuration, install/update/signing flows, app data directories, databases, and release pipelines. They run independently and never require a Windows host or automatically synchronize data.
 
-For the interpreter MVP, use explicit push-to-talk and turn-taking. Proposed flow:
+Shared code is opt-in and limited to platform-neutral contracts and logic after independent Android build/test validation. A shared package must not depend on Windows APIs, Tauri desktop commands, filesystem layout, or app lifecycle. Changes in a shared package require both app suites to pass; Android code is validated on its own before any shared code is adopted. No Android task may change Windows UI or behavior without a separate request.
+
+### Incremental target layout
+
+This is the destination for future work; **Issue #8 does not move existing files**. Preserve root paths and Windows configuration until a separately reviewed migration is proposed.
 
 ```text
-React interpreter screen
-  → typed Tauri commands / events (UI is the only privileged webview)
-  → Android Kotlin audio adapter (AudioRecord, runtime permission, audio focus)
-  → bounded in-memory PCM frames + turn state controller
-  → STT adapter (Android recognizer/cloud or separately validated native model)
-  → transcript review / explicit cloud disclosure
-  → translation provider adapter (Gemini first; optional authorized OpenAI path)
-  → Android TextToSpeech
+LinguaHub-Office-SuperApp/
+├── src/                         # Current Windows React app; stays here for now
+├── src-tauri/                   # Current Windows Tauri/Rust app; stays here for now
+├── apps/
+│   ├── windows/                 # Optional later move, only after migration plan/review
+│   └── android/
+│       ├── package.json         # Independent scripts/dependencies
+│       ├── src/                 # Focused interpreter UI
+│       └── src-tauri/           # Separate Tauri config, Rust crate, Kotlin plugin
+├── packages/
+│   ├── shared-types/            # DTOs, provider/STT/TTS/store contracts
+│   ├── translation-core/        # Locale-aware policy, glossary, pure translation logic
+│   ├── conversation-core/       # Turn state, ephemeral session rules, no OS APIs
+│   ├── ai-core/                 # Provider interfaces/request validation; no client secrets
+│   └── ui-shared/               # Optional accessible primitives, not desktop layouts
+└── docs/
+    ├── windows/
+    └── android/
 ```
 
-The Rust side owns provider selection, request validation, cancellation, translation policy, and any shared pure logic. Native Android owns permission prompts, audio capture/focus/routing, lifecycle integration, and TTS. Copilot is a separate, user-invoked lane and must never gate translation. Conversation history stays ephemeral unless a later opt-in memory issue explicitly saves selected content. No audio or transcript is logged by default. No Ollama is part of this target.
+Dependency direction: each app depends on shared packages; shared packages never depend on either app. Keep package boundaries meaningful and small. Do not symlink Windows `src-tauri` modules into Android. Initially, copy/port only reviewed pure algorithms with tests; extract a package only when both apps have a demonstrated need.
 
-### Trust and credential boundary
+```text
+apps/windows ──┐
+               ├──> packages/{shared-types,translation-core,conversation-core,ai-core}
+apps/android ──┘
 
-- Never ship a shared Gemini/OpenAI API key in the APK, frontend bundle, or native resources. A client-side secret is extractable.
-- Gemini calls require explicit provider/data disclosure and a mobile-safe credential design. Prefer a narrowly scoped authenticated token broker with rate limits and abuse controls; alternatively evaluate a supported per-user authorization path. A broker is a separate service and operational/security decision, not implemented here.
-- Existing Windows DPAPI storage is not portable. Android should use Android Keystore-backed encryption for user-held tokens, subject to backup and key invalidation behavior.
-- Existing ChatGPT sign-in is a native desktop OAuth flow using a loopback callback and a registered desktop client. Do not copy its client registration, loopback assumptions, or token storage to Android. Verify provider-supported mobile authorization and terms before enabling it. “Codex” is not a reason to bypass a supported auth path.
-- UI calls are narrow typed IPC operations. Do not expose arbitrary HTTP, filesystem, or shell capabilities to the webview. Keep transcript/audio out of telemetry and redact errors.
-- Ask for microphone permission just in time, explain whether speech goes on-device or to a named cloud provider, stop capture on denial/revocation/interruption, and release focus and native resources on every end path.
+Windows adapters: WASAPI/WebView2/DPAPI/tray     Android adapters: AudioRecord/TTS/Keystore/lifecycle
+```
 
-## Existing code assessment
+## Android target architecture
 
-| Area | Current implementation | Android assessment / proposed boundary |
+```text
+React interpreter screen (push-to-talk, transcript review, translation)
+  → narrow typed Tauri commands/events
+  → Kotlin Android audio adapter: RECORD_AUDIO prompt, AudioRecord, audio focus
+  → bounded in-memory PCM and explicit turn controller
+  → STT adapter (choice/benchmark deferred to #11)
+  → user-visible cloud disclosure/consent when applicable
+  → translation adapter: Gemini first; optional supported OpenAI authorization
+  → Android TextToSpeech (availability, stop, replay, route)
+```
+
+Use explicit push-to-talk and turn-taking for the MVP. Stop capture while translated speech plays to prevent self-recognition. Keep the voice path independent of optional Codex/Gemini Copilot. Keep transcripts ephemeral unless the user explicitly selects content to save in the later memory scope. Do not write audio/transcripts to logs or analytics. Do not use Ollama.
+
+### Credentials and privacy boundary
+
+- Do not ship shared Gemini/OpenAI API keys in an APK, JS bundle, Rust resources, or Android assets. A distributed client cannot keep a shared secret. Production Gemini use needs a narrowly scoped authenticated token broker or a supported per-user authorization flow; that service/flow is not implemented or approved by this spike.
+- Existing provider keys are protected with Windows DPAPI. That storage is Windows-only. Android requires a separately reviewed Android Keystore-backed design or a broker; there is no secret migration or data sync between apps.
+- Existing ChatGPT authorization uses desktop PKCE with a loopback callback, registered desktop client, DPAPI token storage, and the Responses API. Do not reuse these assumptions on Android. Verify a supported mobile authorization mechanism and applicable terms before exposing ChatGPT/Codex functionality.
+- Ask for microphone permission only when the user starts voice input. Explain on-device/cloud processing before sending any speech-derived text or audio to a provider. Permission denial, revocation, app interruption, cancellation, and errors stop capture and release audio focus/resources.
+- The Android UI receives only typed results; do not expose arbitrary shell, filesystem, or network access through IPC.
+
+## Source review and compatibility matrix
+
+Source inspection covered `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/src/lib.rs`, `audio.rs`, `stt.rs`, `providers.rs`, `chatgpt.rs`, `secrets.rs`, `workspace.rs`, the active command handler, React voice/playback/meeting components, and `src/shared/translation-policy.ts`.
+
+| Existing component/dependency | Evidence in current app | Android treatment |
 |---|---|---|
-| Tauri shell | Tauri 2.12; one Windows UI plus child service webviews, tray, window-state, global shortcut, single-instance plugins in `src-tauri/src/lib.rs` | Tauri 2 has an Android target, but the current desktop shell is not mobile-ready. The multi-window/webview workspace and tray-centric lifecycle should not be ported to the interpreter. Add a dedicated mobile entry/command set and audit plugin support/version compatibility. |
-| React | React 19/Vite; dense Office dashboard and desktop workspace. `MeetingTranslation.tsx` depends on Windows-hosted workspace subtitle extraction, not microphone interpretation. | Reuse language formatting, message primitives, translation policy/cache where they remain platform-neutral. Create a focused responsive interpreter surface; do not route through the desktop meeting-capture feature. |
-| Audio capture | `audio.rs` captures system output via CPAL/WASAPI loopback and resamples to 16 kHz. It is not microphone input. Browser `VoiceInput.tsx` uses `getUserMedia` and Web Audio for short Vietnamese dictation. | WASAPI loopback is Windows-specific and captures the wrong source for a two-person phone interpreter. Prefer a native Android adapter using `AudioRecord`, runtime `RECORD_AUDIO`, audio focus, and bounded buffers. Browser microphone capture may prove a prototype but does not alone cover Android routing/focus/lifecycle requirements. |
-| STT | `stt.rs` uses `whisper-rs`/whisper.cpp, downloadable PhoWhisper/Whisper GGML models, synchronous transcription. | Model files/algorithm may be reusable, but the present build, native dependencies, ABI, memory, CPU/battery, and model licensing/performance on Android are unverified. Do not assume Windows binaries or `whisper-rs` Android cross-build work. Keep STT pluggable; benchmark alternatives under #11. |
-| Gemini | `providers.rs` calls Gemini `generateContent`, supports local DPAPI-protected API key and user consent. | HTTP/provider logic is conceptually portable; key custody and consent model are not. No embedded key. A broker or supported per-user auth needs a decision before runtime use. Translation requests should include explicit direction/locale and bounded context. |
-| OpenAI / ChatGPT | `chatgpt.rs` uses PKCE with `127.0.0.1` callback, desktop client registration, DPAPI token storage, Responses API streaming. | Request layer may be reusable only after auth changes. Loopback redirect/client registration/token persistence require mobile review; do not reuse unchanged. Optional provider must not add latency to core voice path. |
-| Secrets | `secrets.rs` uses Windows DPAPI; non-Windows implementation does not provide equivalent persisted secret encryption. | Android requires Keystore-backed design (or no persistent client credential); current fallback must not be mistaken for secure mobile storage. |
-| Playback | `SpeechPlayback.tsx` uses browser `speechSynthesis`, currently selects English voices and reports Windows voice installation instructions. | Prototype only. Native Android `TextToSpeech` is the target for locale availability, lifecycle, output stop/replay, routing, and microphone mutual exclusion (#13). |
-| Shared policy | `src/shared/translation-policy.ts` is pure TypeScript and includes language detection, batching and cache scope. | Candidate for direct reuse with unit tests. Avoid reusing desktop polling/workspace capture as interpreter control. |
+| Tauri 2.12 core | Root config has Windows bundle ID `com.linguahub.office.superapp`; desktop shell creates a main window and child service webviews. | Tauri supports Android, but use an independent Android config and minimal shell. This repository/crate has not been cross-compiled. Separate package/app ID required. |
+| `tauri` features `unstable`, `tray-icon`, `image-ico` | Declared together in root `Cargo.toml`; `lib.rs` uses child webviews and tray APIs. | Child-webview workspace/tray-centric app behavior is not part of Android interpreter. Remove from Android dependency/features only after minimal-shell build proves the selected core configuration; keep Windows manifest unchanged. |
+| `tauri-plugin-single-instance` | Initialized in `lib.rs` as desktop behavior. | Official Tauri plugin support table does not list Android support. Exclude from Android. |
+| `tauri-plugin-window-state` | Initialized for desktop window geometry. | Desktop window geometry is irrelevant to a phone; official table does not list Android. Exclude. |
+| `tauri-plugin-global-shortcut` | Root dependency; F11 global shortcut code. | Official table does not list Android support. Exclude. |
+| `tauri-plugin-opener` | Used for external URLs/files. | Official plugin table lists Android support; still validate the exact calls/permissions needed by interpreter. |
+| `tauri-plugin-clipboard-manager` | Used by desktop command handler. | Official table lists Android support; optional. Verify clipboard behavior with Android build before use. |
+| `tauri-plugin-notification` | Used by desktop notifications; custom Windows toast implementation also exists. | Official table lists notification support for Windows, not Android. Exclude from minimum interpreter shell unless plugin support is separately verified. Native Android notification handling is out of #8. |
+| `webview2-com`, `windows`, `windows-core` | Windows-only Cargo target dependencies. | Windows crates/APIs must not be Android dependencies. Keep target-specific and out of the Android crate. |
+| `audio.rs` / `cpal` | Code asks CPAL for default output and opens an input stream for system-output caption loopback; current comments/platform behavior identify WASAPI loopback. This is not a phone microphone interpreter. | Do not port the loopback feature. Use Android `AudioRecord` through a Kotlin/mobile plugin. `cpal` may have other platform backends, but this implementation and audio source are not evidence of Android mic support. |
+| `whisper-rs` 0.16 / whisper.cpp | Existing Rust STT with downloadable PhoWhisper/Whisper GGML models; Windows build currently documents CMake/LLVM. | Exact Android crate/native build, NDK, model ABI, memory, battery, latency and distribution are unverified. Treat as a high-risk candidate; keep behind `Stt` contract and benchmark in #11. Do not include in minimal shell until verified. |
+| `gpu-vulkan`, `gpu-cuda` features | Whisper GPU features in root Cargo manifest. | CUDA feature is not an Android target strategy; Vulkan Android support/build is unverified. Exclude both from first Android spike. |
+| `rusqlite` bundled, Tokio, reqwest, serde and pure Rust crates | Present in root Cargo manifest. | Not inherently Windows-only, but Android compile/link, TLS, SQLite and feature compatibility have not been tested for the current dependency graph. Add selectively to the Android crate after target build. |
+| `providers.rs` Gemini HTTP | API key stored through Windows secret module; explicit cloud consent exists. | Provider request logic can inform a shared adapter, but never ship the Windows key workflow or embedded API key. Broker/per-user auth decision required. |
+| `chatgpt.rs` OAuth and Responses API | Loopback callback, desktop client registration, DPAPI token store. | Do not copy unchanged; mobile auth/support is an open gate. Optional conversation assistance must not block speech translation. |
+| `secrets.rs` | DPAPI on Windows; non-Windows fallback is not an Android secure store. | Exclude this module from Android; design Keystore/broker path separately. |
+| `SpeechPlayback.tsx` | Browser speech synthesis presently selects English voices and shows Windows-specific installation guidance. | Replace for Android with native `TextToSpeech`, language availability checks, stop/replay, and capture mutual exclusion (#13). |
+| `VoiceInput.tsx` | Browser `getUserMedia`, Web Audio and Whisper used for Vietnamese dictation in Windows UI. | Useful reference only; does not verify Android runtime permission/lifecycle/focus. Native microphone plugin is required for the intended robust flow. |
+| `translation-policy.ts` | Pure TypeScript language detection, batching and cache scope. | Candidate for shared package only after isolated Android unit tests and no desktop imports. |
+| Windows workspace, PDF, ERP credential, updater, task/tray code | `workspace.rs`, `pdf_export.rs`, Windows Credential Manager, desktop commands and shell initialization. | Exclude from Android app. Shared ERP glossary/domain terms may be extracted independently; never copy platform-specific credential or shell functions. |
 
-## Compatibility matrix
+Tauri’s official plugin support matrix is per-plugin and can change; the table above distinguishes documented Android support from unknown dependencies that still need a build. See [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), [Tauri plugin support table](https://v2.tauri.app/plugin/), [mobile plugin development](https://v2.tauri.app/develop/plugins/develop-mobile/), and [Android APK distribution](https://v2.tauri.app/distribute/google-play/).
 
-| Component | Windows today | Android disposition | Feasibility |
-|---|---|---|---|
-| React/Vite UI | Supported | Rebuild as focused mobile view inside Tauri Android WebView | High; device layout/accessibility still to validate |
-| Tauri core IPC | Desktop build | Retain command/event boundary; validate Android plugin and permission APIs | Medium-high, pending toolchain build |
-| Tauri unstable child webviews / workspace | Central desktop feature | Exclude from interpreter target | Low / unnecessary |
-| Tray, global shortcuts, window-state, single-instance | Desktop shell | Exclude or replace with Android lifecycle/navigation | Low / not applicable |
-| Rust pure policy/provider code | Host compiled | Reuse selectively after Android target compile and dependency audit | Medium |
-| `cpal` WASAPI loopback | Windows system-output capture | Replace with native microphone capture | Not compatible as currently used |
-| `whisper-rs` model inference | Windows Whisper/PhoWhisper | Candidate only; cross-compile, model license, ABI, RAM, latency, and battery spike required | Unknown; high risk |
-| Browser `getUserMedia` | UI dictation on Windows | Possible prototype fallback; native permission/lifecycle still must be proven | Medium / insufficient as final evidence |
-| Gemini HTTP API | Works with user key and Windows storage | API is reachable; credential approach must change | Medium, gated by secure auth/broker decision |
-| ChatGPT/Codex OAuth | Desktop loopback + DPAPI | Do not reuse flow unchanged; confirm supported mobile authorization | Unknown / gated |
-| Windows DPAPI and Credential Manager | Used for keys/passwords | Replace with Android Keystore-backed strategy; no data migration | Incompatible |
-| Browser `speechSynthesis` | OS voice playback | Prototype only; use native Android TTS and explicit locale checks | Medium-high |
-| SQLite selective memory | Existing Windows data stores | Separate Android database and opt-in policy; never share Windows profile | Feasible later, out of #8 implementation |
+## Android build setup and APK instructions
 
-## Build and validation plan
+Tauri’s current guide calls for Android Studio, JDK (`JAVA_HOME`), Android SDK Platform, Platform-Tools, NDK (side-by-side), Build-Tools, Command-line Tools, `ANDROID_HOME`/`NDK_HOME`, and Rust Android targets. It lists Android 7.0/API 24 as the Tauri minimum. Install versions compatible with the pinned Tauri release rather than blindly selecting an old NDK. See the official [prerequisites](https://v2.tauri.app/start/prerequisites/) and [distribution guide](https://v2.tauri.app/distribute/google-play/).
 
-1. Install a supported JDK, Android SDK command-line tools/platform-tools, Android platform/build-tools, and NDK/CMake versions supported by the pinned Tauri 2 release; set `JAVA_HOME` and Android SDK environment variables.
-2. Install Rust stable plus `aarch64-linux-android` and (for emulator/CI as needed) `x86_64-linux-android`; verify NDK linker configuration.
-3. From a clean feature checkout, run `npx tauri android init` in a disposable worktree/branch, preserving the existing desktop config and bundle identifier. Set a distinct Android application ID. Inspect generated Gradle/plugin versions and manifest.
-4. Build the smallest Tauri Android debug APK first. Then compile the existing Rust crate for Android to expose unsupported target dependencies and linker/build-script assumptions. Do not treat a generated project as proof the full app compiles.
-5. Gate the full app on target-specific module/plugin split: Windows-only workspace/tray/DPAPI/credential/PDF modules must not enter the mobile build; add the native audio/TTS bridge only in its assigned issues.
-6. Install on a physical device and verify launch, first-use microphone prompt, deny, grant, stop/release, revoke in system settings, app background/foreground, incoming audio interruption, and permission state after relaunch. Record Android version/API level, model, build SHA, logs (redacted), and screen recording or screenshots. No device is attached/available in this environment, so these checks are pending.
-7. Maintain Windows baseline: `npm run typecheck`, `npm test`, Rust tests, and Windows release build from the current branch before/after any later cross-platform source changes. The current #8 change is documentation only; no baseline test commands were run in this environment.
+After the separate Android app shell is added (future #9), the expected workflow is:
 
-### Environment observed for this spike
+```powershell
+# From apps/android (once created): install JS dependencies using the committed lockfile
+npm ci
 
-On 2026-11-10, this Windows checkout had no discoverable `adb`, `java`, `cargo`, `rustup`, or `gradle` command, no Android SDK environment variables, and no attached device output. Therefore Android build feasibility is **not validated** and microphone permission behavior is **not device-validated**. Tauri Android viability is an architectural hypothesis supported by the framework's Android target, not a claim that this repository currently builds for Android. Re-run the plan above in a provisioned Android environment before accepting the implementation gate.
+# Initialize the Android Studio project once, in the Android app only
+npm run tauri android init
 
-## Known limitations / decision gates
+# Build a debug APK
+npm run tauri android build -- --debug --apk
 
-- Existing app is a Windows office super-app, not a mobile interpreter; issue #8 does not claim a running Android artifact.
-- Android `whisper-rs`/PhoWhisper performance and packaging are unknown. Keep a provider seam and benchmark native Android/cloud STT in #11; disclose cloud transfer and obtain consent.
-- Gemini direct API keys cannot be protected inside a distributed APK. A broker or verified per-user auth is required before production use; do not silently reuse the Windows key workflow.
-- ChatGPT/Codex mobile authorization is not established by the current Windows integration. Verify supported auth and terms before implementation.
-- Android TTS voices vary by installed engine/language packs. The app must report unavailable Vietnamese/English voices and offer install/settings guidance.
-- No real device, Android SDK, Android build, microphone prompt, runtime permission, revocation, latency, or audio-focus evidence was available for this spike.
+# Install on an attached, authorized device
+adb devices -l
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
 
-## Windows preservation
+Exact APK output path/variant must be confirmed from Gradle output for the chosen Tauri CLI version. The command example is a procedure, **not a build result**. Use a unique Android application ID; keep `com.linguahub.office.superapp` and all Windows paths/configuration untouched. Before release, sign Android builds with a separate Android signing key and document independent update/release handling.
 
-No existing app behavior, source, package ID, data directory, WebView profile, or Windows build configuration is modified by this issue. Android must use a separate application ID and app data location. Keep all Windows desktop code under Windows target/configuration and require Windows regression checks in later implementation PRs.
+## Microphone permission design and device test plan
+
+Android requires `android.permission.RECORD_AUDIO` in the app manifest and runtime user approval (dangerous permission). Request it only after the user presses the interpreter’s microphone control. Before capture, check current permission; on denial explain the disabled feature and offer a route to app settings if permanently denied. Never assume an earlier grant remains valid. Android can provide one-time permission and revoke access; the app must handle permission loss/process restart. See [Android permission overview](https://developer.android.com/guide/topics/permissions/overview) and [request runtime permissions](https://developer.android.com/training/permissions/requesting).
+
+When a device and minimal shell are available, record device make/model, Android/API version, app/commit ID, manifest permission, and result for each case:
+
+1. Fresh install: launch without microphone request; tap PTT and observe Android prompt.
+2. Grant permission: capture a short test utterance, stop, confirm UI state and microphone indicator clear, then repeat.
+3. Deny once: confirm no capture starts, clear explanation, retry prompt behavior.
+4. Deny permanently or revoke in Settings: confirm app stops/does not silently resume and provides settings guidance.
+5. One-time grant/backgrounding, activity recreation, screen lock, incoming call/audio-focus loss, and app return: confirm capture stops/restarts only by explicit action and native resources release.
+6. Verify transcript/audio are not written to app storage or logs with history disabled. Redact logs/screenshots before attaching to PR.
+
+Android documentation notes emulator microphone recording may be unavailable; use a physical device for actual capture and runtime permission evidence. A generated manifest or successful build alone does not satisfy this test.
+
+## Checks actually performed for this PR
+
+- Source review: completed against the current Windows implementation and configuration.
+- Android tool discovery: `adb`, `java`, `cargo`, `rustup`, `gradle`, `npx` and Android SDK environment variables were not discoverable in the current shell; no Android device is attached.
+- Build probe: attempted `npx tauri android init` in an isolated worktree. It stopped immediately because `npx` is unavailable. No generated Android project, APK, or permission test resulted.
+- `git diff --check`: must be run on the final commit before update (see PR checks).
+- Windows build/tests: not run for this documentation-only change. No Windows source/config is changed by this Issue #8 commit. Existing unrelated local Windows edits in the primary checkout were left untouched.
+
+**Feasibility conclusion:** Tauri 2 provides an Android build path in principle, but this repository’s current Windows application has not been shown to build for Android and is not a suitable Android target unchanged. A minimal separate app is plausible; successful Android compilation, plugin selection, microphone permission behavior, Whisper packaging/performance, and end-to-end round trips remain unverified. Do not mark the Android build/device acceptance criteria complete on this evidence.
+
+## Windows protection and integration gates
+
+- Keep the current root `src/`, `src-tauri/`, Windows bundle ID, user data/profile paths, and Windows release process unchanged in this issue.
+- Future Android work lives under `apps/android` with its own Tauri identifier, app data, configuration, signing and CI.
+- No Windows/Android data synchronization or implicit transcript import.
+- Validate Android shell and mic permission behavior independently before proposing shared-package extraction.
+- Require Windows typecheck/tests/Rust tests/build on any later PR that changes shared modules or Windows source.
+- Keep changes to Issues #9–#17 out of PR #18. Review and merge Issue #8 before starting the next issue.
