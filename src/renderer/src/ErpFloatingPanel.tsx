@@ -1,5 +1,5 @@
 import React from 'react'
-import { PanelRightClose, PanelRightOpen, Sparkles, BriefcaseBusiness } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, Sparkles, BriefcaseBusiness, Pin } from 'lucide-react'
 import { SampleFilePanel } from './SampleFilePanel'
 import './style.css'
 import './dashboard.css'
@@ -9,11 +9,19 @@ const AiPanel = React.lazy(() => import('./AiPanel').then(module => ({ default: 
 type PanelState = {
   collapsed: boolean
   width: number
+  pinned: boolean
   activeTab: { id: string; name: string; address: string } | null
 }
 
 export function ErpFloatingPanel() {
-  const [state, setState] = React.useState<PanelState>({ collapsed: true, width: 360, activeTab: null })
+  const [state, setState] = React.useState<PanelState>({ collapsed: true, width: 360, pinned: false, activeTab: null })
+  const drag = React.useRef<{ x: number; width: number } | null>(null)
+  const resize = (event: React.PointerEvent<HTMLDivElement>, persist = false) => {
+    if (!drag.current) return
+    const width = Math.max(280, Math.min(560, Math.round(drag.current.width + drag.current.x - event.screenX)))
+    setState(previous => ({ ...previous, width }))
+    window.lingua.setWorkspacePanelLayout(width, false, persist, state.pinned)
+  }
   const [view, setView] = React.useState<'files' | 'ai' | 'settings'>('files')
 
   React.useEffect(() => {
@@ -59,7 +67,16 @@ export function ErpFloatingPanel() {
 
   return (
     <main className="erp-floating-panel-root">
+      <div className="erp-focus-resizer" role="separator" aria-label="Đổi độ rộng panel phải" aria-orientation="vertical" tabIndex={0}
+        onPointerDown={event => { drag.current = { x: event.screenX, width: window.innerWidth }; event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerMove={event => resize(event)}
+        onPointerUp={event => { resize(event, true); drag.current = null; event.currentTarget.releasePointerCapture(event.pointerId) }}
+        onPointerCancel={() => { drag.current = null }}
+        onKeyDown={event => { if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return; event.preventDefault(); window.lingua.setWorkspacePanelLayout(Math.max(280, Math.min(560, state.width + (event.key === 'ArrowLeft' ? 20 : -20))), false, true, state.pinned) }} />
       <div className="erp-floating-panel-toolbar">
+        <button type="button" aria-label={state.pinned ? 'Bỏ ghim panel' : 'Ghim panel'} aria-pressed={state.pinned} title={state.pinned ? 'Bỏ ghim: panel nổi trên ERP' : 'Ghim: chia không gian với ERP'} onClick={() => window.lingua.setWorkspacePanelLayout(state.width, false, false, !state.pinned)}>
+          <Pin size={16} /><span>{state.pinned ? 'Đã ghim' : 'Ghim'}</span>
+        </button>
         <button type="button" className={view === 'files' ? 'active' : ''} title="Tiện ích ERP" onClick={() => setView('files')}>
           <BriefcaseBusiness size={16} aria-hidden="true" /><span>Tệp ERP</span>
         </button>

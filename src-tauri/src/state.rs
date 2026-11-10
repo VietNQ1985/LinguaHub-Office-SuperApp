@@ -34,6 +34,7 @@ pub struct Inner {
     pub views: HashSet<String>,
     pub panel_width: f64,
     pub panel_collapsed: bool,
+    pub panel_pinned: bool,
     /// ERP focus mode makes the native webview use the full width below its tab strip.
     pub focus_mode: bool,
     pub focus_restore_maximized: bool,
@@ -96,6 +97,7 @@ impl AppState {
             views: HashSet::new(),
             panel_width: preferences["panelWidth"].as_f64().unwrap_or(360.0),
             panel_collapsed: false,
+            panel_pinned: false,
             focus_mode: false,
             focus_restore_maximized: false,
             sidebar_width: 232.0,

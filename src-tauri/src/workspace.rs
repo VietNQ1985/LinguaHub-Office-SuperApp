@@ -811,7 +811,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         } else {
             inner.panel_width
         };
-        let panel = if inner.focus_mode && !inner.panel_collapsed { (width * 0.30).clamp(360.0, 560.0).min((width - 520.0).max(280.0)) } else { panel };
+        let panel = panel.min((width - 520.0).max(280.0));
         let divider = if inner.panel_collapsed || inner.focus_mode {
             0.0
         } else {
@@ -856,7 +856,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         let left = if focus_mode { 0.0 } else { sidebar_width };
         // In F11 the separate panel overlays ERP; toggling it must not resize
         // the page or move its columns. Normal mode keeps the docked panel.
-        let right_reserved = if focus_mode { 0.0 } else { panel + divider };
+        let right_reserved = if focus_mode && !state.lock().panel_pinned { 0.0 } else { panel + divider };
         let _ = webview.set_position(LogicalPosition::new(left, top));
         let _ = webview.set_size(LogicalSize::new(
             (width - left - right_reserved).max(300.0),

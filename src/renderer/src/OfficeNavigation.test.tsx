@@ -14,7 +14,7 @@ test('sidebar routes to the selected area and shows the application version and 
   try {
     await act(async () => root.render(createElement(OfficeSidebar, { active: 'dashboard', collapsed: false, onNavigate: navigate, onToggle: vi.fn(), onManageWorkspaces: vi.fn() })))
     expect(dom.window.document.querySelector('[aria-current="page"]')?.textContent).toContain('Tổng quan')
-    expect(dom.window.document.body.textContent).toContain('v0.4.18')
+    expect(dom.window.document.body.textContent).toContain('v0.4.20')
     expect(dom.window.document.body.textContent).toContain('© 2026 Viet Nguyen Quoc')
     const messages = Array.from(dom.window.document.querySelectorAll('button')).find(button => button.textContent?.includes('Tin nhắn'))!
     await act(async () => messages.click())
@@ -45,6 +45,16 @@ test('global search supports Ctrl+K and Enter navigation', async () => {
     const email = Array.from(dom.window.document.querySelectorAll('button[role="option"]')).find(button => button.textContent?.includes('Email')) as HTMLButtonElement
     await act(async () => email.click())
     expect(navigate).toHaveBeenCalledWith('email')
+    const reopen = async () => act(async () => input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })))
+    await reopen()
+    await act(async () => dom.window.document.body.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true })))
+    expect(input.getAttribute('aria-expanded')).toBe('false')
+    await reopen()
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('blur')))
+    expect(input.getAttribute('aria-expanded')).toBe('false')
+    await reopen()
+    await act(async () => input.dispatchEvent(new dom.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null })))
+    expect(input.getAttribute('aria-expanded')).toBe('false')
   } finally {
     await act(async () => root.unmount())
     dom.window.close()

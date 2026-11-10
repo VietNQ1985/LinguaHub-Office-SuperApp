@@ -62,6 +62,7 @@ pub fn workspace_panel_layout(
     app: AppHandle,
     state: State<AppState>,
     panel_width: i64,
+    pinned: Option<bool>,
     collapsed: bool,
     persist: bool,
 ) -> Res<()> {
@@ -80,6 +81,7 @@ pub fn workspace_panel_layout(
     {
         let mut inner = state.lock();
         inner.panel_width = panel;
+        if let Some(pinned) = pinned { inner.panel_pinned = pinned; }
         inner.panel_collapsed = collapsed;
     }
     workspace::layout(&app);
@@ -168,9 +170,9 @@ pub async fn workspace_focus_mode(
 }
 
 fn focus_panel_snapshot(app: &AppHandle, state: &AppState) -> Value {
-    let (collapsed, width) = {
+    let (collapsed, width, pinned) = {
         let inner = state.lock();
-        (inner.panel_collapsed, inner.panel_width)
+        (inner.panel_collapsed, inner.panel_width, inner.panel_pinned)
     };
     let active_tab = workspace::current_view(app)
         .filter(|(id, _)| id.starts_with("web-"))
@@ -182,7 +184,7 @@ fn focus_panel_snapshot(app: &AppHandle, state: &AppState) -> Value {
                 "address": url.origin().ascii_serialization(),
             }))
         });
-    json!({"collapsed": collapsed, "width": width, "activeTab": active_tab})
+    json!({"collapsed": collapsed, "width": width, "pinned": pinned, "activeTab": active_tab})
 }
 
 #[tauri::command]

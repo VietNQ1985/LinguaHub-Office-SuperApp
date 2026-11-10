@@ -96,7 +96,7 @@ window.lingua = {
     return () => { shortcutListeners.delete(callback) }
   },
   reloadWorkspace: () => call('workspace_reload'),
-  setWorkspacePanelLayout: (panelWidth, collapsed, persist = false) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist }).catch(() => {}) },
+  setWorkspacePanelLayout: (panelWidth, collapsed, persist = false, pinned) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist, pinned }).catch(() => {}) },
   setWorkspaceFocusMode: enabled => call('workspace_focus_mode', { enabled }),
   getWorkspaceFocusPanelState: () => call('workspace_focus_panel_state'),
   setWorkspaceSidebarLayout: collapsed => { void call('workspace_sidebar_layout', { collapsed }).catch(() => {}) },

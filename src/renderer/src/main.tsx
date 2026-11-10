@@ -129,9 +129,9 @@ declare global {
       hideToTray(): Promise<boolean>
       onShortcut(callback: (action: string) => void): () => void
       reloadWorkspace(): Promise<{ title: string }>
-      setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean): void
+      setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean, pinned?: boolean): void
       setWorkspaceFocusMode(enabled: boolean): Promise<void>
-      getWorkspaceFocusPanelState(): Promise<{ collapsed: boolean; width: number; activeTab: { id: string; name: string; address: string } | null }>
+      getWorkspaceFocusPanelState(): Promise<{ collapsed: boolean; width: number; pinned: boolean; activeTab: { id: string; name: string; address: string } | null }>
       openWorkspace(service: WorkspaceService): Promise<{ title: string }>
       showDashboard(): Promise<boolean>
       openExternal(service: WorkspaceService): Promise<void>

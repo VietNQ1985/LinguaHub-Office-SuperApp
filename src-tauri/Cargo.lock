@@ -2733,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "linguahub-office-superapp"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

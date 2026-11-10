@@ -824,3 +824,7 @@ span.ai-trust-pill { cursor: default; }
   .erp-panel-nav { gap: 3px; }
   .erp-panel-nav-tab { gap: 3px; padding-inline: 4px; font-size: 10.5px; }
 }
+
+.erp-floating-panel-root { position:relative; padding-left:6px; }
+.erp-focus-resizer { position:absolute; left:0; top:0; bottom:0; width:6px; cursor:col-resize; touch-action:none; background:var(--border); z-index:10; }
+.erp-focus-resizer:hover,.erp-focus-resizer:focus-visible { background:var(--accent); }
