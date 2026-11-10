@@ -854,9 +854,9 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
                 }
         };
         let left = if focus_mode { 0.0 } else { sidebar_width };
-        // The focus panel is a separate native window. Reserve its width in the
-        // ERP webview so the panel docks beside the page instead of covering it.
-        let right_reserved = panel + divider;
+        // In F11 the separate panel overlays ERP; toggling it must not resize
+        // the page or move its columns. Normal mode keeps the docked panel.
+        let right_reserved = if focus_mode { 0.0 } else { panel + divider };
         let _ = webview.set_position(LogicalPosition::new(left, top));
         let _ = webview.set_size(LogicalSize::new(
             (width - left - right_reserved).max(300.0),
