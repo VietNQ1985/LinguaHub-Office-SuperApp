@@ -22,6 +22,8 @@ function subscribe<T>(event: string, handler: (payload: T) => void) {
 
 const shortcutListeners = new Set<(action: string) => void>()
 for(const event of ['web-tab-created','web-tab-updated','web-tab-navigated'])void listen(event,message=>window.dispatchEvent(new CustomEvent('linguahub:'+event,{detail:message.payload})))
+void listen('erp-focus-toggle', () => window.dispatchEvent(new Event('linguahub:erp-focus-toggle')))
+void listen('erp-panel-state', message => window.dispatchEvent(new CustomEvent('linguahub:erp-panel-state', {detail: message.payload})))
 void listen<{ tabId: string; origin: string; username: string; password: string }>(
   'erp-credential-proposal',
   message =>
@@ -95,6 +97,8 @@ window.lingua = {
   },
   reloadWorkspace: () => call('workspace_reload'),
   setWorkspacePanelLayout: (panelWidth, collapsed, persist = false) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist }).catch(() => {}) },
+  setWorkspaceFocusMode: enabled => call('workspace_focus_mode', { enabled }),
+  getWorkspaceFocusPanelState: () => call('workspace_focus_panel_state'),
   setWorkspaceSidebarLayout: collapsed => { void call('workspace_sidebar_layout', { collapsed }).catch(() => {}) },
   setWorkspaceServiceTabsLayout: visible => call('workspace_service_tabs_layout', { visible }),
   setMasking: (enabled: boolean) => call('privacy_masking', { enabled }),

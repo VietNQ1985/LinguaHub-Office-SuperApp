@@ -2,6 +2,7 @@ import { WorkTasks, type TaskSourceSnapshot } from './WorkTasks'
 import { WorkspaceForm } from './WorkspaceForm'
 import { SampleFileFinder } from './SampleFileFinder'
 import { SampleFilePanel } from './SampleFilePanel'
+import { ErpFloatingPanel } from './ErpFloatingPanel'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import './style.css'
@@ -36,6 +37,8 @@ import type {
 import type { ErpFileInspection } from './erpFileTools'
 import {
   ArrowLeft,
+  Maximize2,
+  Minimize2,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -127,6 +130,8 @@ declare global {
       onShortcut(callback: (action: string) => void): () => void
       reloadWorkspace(): Promise<{ title: string }>
       setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean): void
+      setWorkspaceFocusMode(enabled: boolean): Promise<void>
+      getWorkspaceFocusPanelState(): Promise<{ collapsed: boolean; width: number; activeTab: { id: string; name: string; address: string } | null }>
       openWorkspace(service: WorkspaceService): Promise<{ title: string }>
       showDashboard(): Promise<boolean>
       openExternal(service: WorkspaceService): Promise<void>
@@ -506,7 +511,53 @@ function App() {
   const [fallbackService, setFallbackService] = React.useState<WorkspaceService | null>(null)
   const [panelWidth, setPanelWidth] = React.useState(360)
   const [panelCollapsed, setPanelCollapsed] = React.useState(false)
+  const [erpFocusMode, setErpFocusMode] = React.useState(false)
+  const panelCollapsedBeforeFocus = React.useRef(false)
+  const openErpRef = React.useRef<(() => Promise<void>) | null>(null)
   const [status, setStatus] = React.useState('Đang mở…')
+  const isErpWorkspaceActive = activeArea === 'projects' && erpOpen && !tasksOpen
+  React.useEffect(() => {
+    void window.lingua.setWorkspaceFocusMode(erpFocusMode).catch(error => {
+      console.error('Could not switch ERP focus mode', error)
+      if (erpFocusMode) setStatus('Chưa mở được panel ERP nổi. Anh thử lại sau khi tải lại ứng dụng.')
+    })
+  }, [erpFocusMode])
+  const toggleErpFocusMode = React.useCallback(() => {
+    if (erpFocusMode) {
+      setErpFocusMode(false)
+      setPanelCollapsed(panelCollapsedBeforeFocus.current)
+      return
+    }
+    const enter = () => {
+      panelCollapsedBeforeFocus.current = panelCollapsed
+      setPanelCollapsed(false)
+      setErpFocusMode(true)
+    }
+    if (isErpWorkspaceActive) enter()
+    else if (openErpRef.current) {
+      void openErpRef.current().then(enter).catch(() => setStatus('Chưa mở được tab ERP để chuyển sang chế độ tập trung.'))
+    }
+  }, [erpFocusMode, isErpWorkspaceActive, panelCollapsed])
+  React.useEffect(() => {
+    const toggle = () => toggleErpFocusMode()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'F11' || event.altKey || event.ctrlKey || event.metaKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      toggleErpFocusMode()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('linguahub:erp-focus-toggle', toggle)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('linguahub:erp-focus-toggle', toggle)
+    }
+  }, [erpFocusMode, isErpWorkspaceActive, toggleErpFocusMode])
+  React.useEffect(() => {
+    if (isErpWorkspaceActive || !erpFocusMode) return
+    setErpFocusMode(false)
+    setPanelCollapsed(panelCollapsedBeforeFocus.current)
+  }, [erpFocusMode, isErpWorkspaceActive])
   React.useEffect(() => {
     const failed = (event: Event) => setStatus((event as CustomEvent<string>).detail)
     window.addEventListener('linguahub:local-error', failed)
@@ -616,6 +667,7 @@ function App() {
   )
   const openErp = React.useCallback(async () => {
     setActiveArea('projects')
+    setErpOpen(true)
     setSampleFinderOpen(false)
     setTasksOpen(false)
     setErpRightPanelView('files')
@@ -631,8 +683,9 @@ function App() {
       webTabs.find(value => value.id === savedId) ||
       webTabs.at(-1)
     if (tab) {
-      await openWeb(tab)
-      return
+      if (await openWeb(tab)) return
+      // A saved tab can become stale after its native WebView was closed. Recover into a fresh
+      // Arito tab instead of leaving F11 on an empty ERP hub.
     }
     if (webTabs.length >= 20) {
       setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.')
@@ -650,6 +703,7 @@ function App() {
       )
     }
   }, [activeWeb, openWeb, webTabs])
+  openErpRef.current = openErp
   const showEmptyErp = () => {
     setActiveArea('projects')
     setSampleFinderOpen(false)
@@ -983,7 +1037,7 @@ function App() {
   const showErpFilesPanel = activeArea === 'projects' && erpOpen && erpRightPanelView === 'files'
 
   return (
-    <div className="office-app" lang="vi">
+    <div className={erpFocusMode ? 'office-app erp-focus-mode' : 'office-app'} lang="vi">
       <OfficeSidebar
         active={activeArea}
         collapsed={sidebarCollapsed}
@@ -1034,6 +1088,17 @@ function App() {
           </div>
           <OfficeGlobalSearch onNavigate={area => void navigateArea(area)} />
           <div className="office-topbar-actions">
+            {isErpWorkspaceActive && (
+              <button
+                type="button"
+                className="office-icon-button"
+                title={erpFocusMode ? 'Thoát chế độ tập trung ERP (F11)' : 'Tập trung ERP (F11)'}
+                aria-label={erpFocusMode ? 'Thoát chế độ tập trung ERP' : 'Tập trung ERP'}
+                onClick={toggleErpFocusMode}
+              >
+                {erpFocusMode ? <Minimize2 size={18} aria-hidden="true" /> : <Maximize2 size={18} aria-hidden="true" />}
+              </button>
+            )}
             <OfficeNotifications
               counts={unread}
               onOpen={service => void open(service, 'messages')}
@@ -1172,6 +1237,28 @@ function App() {
             >
               ⌕ Tra Sample ID
             </button>
+            <div className="erp-subtabs-actions">
+              <button
+                type="button"
+                className="erp-subtab-icon erp-subtab-action"
+                aria-label={panelCollapsed ? 'Mở panel phải' : 'Thu gọn panel phải'}
+                title={panelCollapsed ? 'Mở panel phải' : 'Thu gọn panel phải'}
+                onClick={() => setPanelCollapsed(value => !value)}
+              >
+                {panelCollapsed ? <PanelRightOpen size={15} aria-hidden="true" /> : <PanelRightClose size={15} aria-hidden="true" />}
+                <span>Panel phải</span>
+              </button>
+              <button
+                type="button"
+                className={erpFocusMode ? 'erp-subtab-icon erp-subtab-action active' : 'erp-subtab-icon erp-subtab-action'}
+                aria-label={erpFocusMode ? 'Thu ERP (F11)' : 'Bung ERP (F11)'}
+                title={erpFocusMode ? 'Thu ERP (F11)' : 'Bung ERP (F11)'}
+                onClick={toggleErpFocusMode}
+              >
+                {erpFocusMode ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+                <span>{erpFocusMode ? 'Thu ERP' : 'Bung ERP'}</span>
+              </button>
+            </div>
           </nav>
         )}
 
@@ -1537,7 +1624,17 @@ function App() {
                   aria-label="Mở trợ lý AI"
                   onClick={() => setPanelCollapsed(false)}
                 >
-                  ›
+                  {erpFocusMode ? <PanelRightOpen size={18} aria-hidden="true" /> : '›'}
+                </button>
+              )}
+              {erpFocusMode && !panelCollapsed && (
+                <button
+                  className="focus-panel-toggle"
+                  title="Ẩn panel phải (F11 để thoát chế độ tập trung)"
+                  aria-label="Ẩn panel phải"
+                  onClick={() => setPanelCollapsed(true)}
+                >
+                  <PanelRightClose size={17} aria-hidden="true" />
                 </button>
               )}
               <div
@@ -1577,9 +1674,16 @@ function App() {
   )
 }
 
+const isErpFloatingPanel = Boolean(
+  (window as Window & { __LINGUA_HUB_ERP_PANEL__?: boolean }).__LINGUA_HUB_ERP_PANEL__,
+)
 createRoot(document.getElementById('root')!).render(
-  <>
-    <App />
-    <DialogHost />
-  </>,
+  isErpFloatingPanel ? (
+    <ErpFloatingPanel />
+  ) : (
+    <>
+      <App />
+      <DialogHost />
+    </>
+  ),
 )

@@ -28,6 +28,36 @@ pub const ERP_TABS_HEIGHT: f64 = 32.0;
 /// The message app switcher rendered below the office navigation.
 pub const SERVICE_SWITCHER_HEIGHT: f64 = 42.0;
 
+/// Ensure the floating panel exists. Keep its native window alive between focus-mode toggles:
+/// closing then immediately rebuilding can race Tauri's window registry and leave no panel.
+pub fn recreate_erp_focus_panel<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
+    if app.get_webview_window("erp-panel").is_some() || app.get_webview("erp-panel").is_some() {
+        return Ok(());
+    }
+    let panel = WebviewWindowBuilder::new(
+        app,
+        "erp-panel",
+        WebviewUrl::App("index.html".into()),
+    )
+        .title("LinguaHub ERP panel")
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .visible(false)
+        .additional_browser_args(BROWSER_ARGS)
+        .initialization_script("window.__LINGUA_HUB_ERP_PANEL__ = true;")
+        .on_navigation(|url| {
+            matches!(
+                url.host_str(),
+                Some("localhost" | "127.0.0.1" | "tauri.localhost")
+            )
+        })
+        .on_new_window(|_url, _features| NewWindowResponse::Deny);
+    let _ = panel.build()?;
+    Ok(())
+}
+
 #[cfg(windows)]
 #[derive(Clone)]
 pub(crate) struct PopupSlot {
@@ -556,7 +586,11 @@ fn open_web_tab_with_options(
         let popup_pool: PopupPool = Arc::new(Mutex::new(VecDeque::new()));
         let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
             .additional_browser_args(BROWSER_ARGS)
-            .initialization_script(include_str!("../page-scripts/erp-password-manager.js"))
+            .initialization_script(concat!(
+                include_str!("../page-scripts/erp-password-manager.js"),
+                "\n",
+                include_str!("../erp-tools/erp-focus-shortcut.js"),
+            ))
             .on_navigation(move |url| {
                 if url.scheme() == "linguahub-local" && url.host_str() == Some("open") {
                     if let Some((_, path)) = url.query_pairs().find(|(key, _)| key == "path") {
@@ -655,8 +689,6 @@ fn open_web_tab_with_options(
 /// Shared by every webview (they must match to share one WebView2 environment). Fewer renderer
 /// processes: one per site instead of one per tab/frame where possible. The first three are wry's defaults.
 pub const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --renderer-process-limit=4 --process-per-site";
-const AGENT: &str = include_str!("../page-scripts/agent.js");
-
 pub fn read_script(service: &str) -> &'static str {
     match service {
         "outlook" => include_str!("../page-scripts/read-outlook.js"),
@@ -753,7 +785,16 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     };
     let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
     let state = app.state::<AppState>();
-    let (current, panel, divider, dialog_open, labels, sidebar_width, service_tabs_height) = {
+    let (
+        current,
+        panel,
+        divider,
+        dialog_open,
+        labels,
+        sidebar_width,
+        service_tabs_height,
+        focus_mode,
+    ) = {
         let inner = state.lock();
         let panel = if inner.panel_collapsed {
             56.0
@@ -769,6 +810,7 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             inner.views.clone(),
             inner.sidebar_width,
             inner.service_tabs_height,
+            inner.focus_mode,
         )
     };
     for label in labels {
@@ -781,16 +823,26 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             } else {
                 0.0
             };
-        let top = HEADER
-            + service_tabs_height
-            + if current.starts_with("web-") {
+        let top = if focus_mode {
+            if current.starts_with("web-") {
                 ERP_TABS_HEIGHT
             } else {
                 0.0
-            };
-        let _ = webview.set_position(LogicalPosition::new(sidebar_width, top));
+            }
+        } else {
+            HEADER
+                + service_tabs_height
+                + if current.starts_with("web-") {
+                    ERP_TABS_HEIGHT
+                } else {
+                    0.0
+                }
+        };
+        let left = if focus_mode { 0.0 } else { sidebar_width };
+        let right_reserved = if focus_mode { 0.0 } else { panel + divider };
+        let _ = webview.set_position(LogicalPosition::new(left, top));
         let _ = webview.set_size(LogicalSize::new(
-            (width - sidebar_width - panel - divider).max(300.0),
+            (width - left - right_reserved).max(300.0),
             (height - top).max(100.0),
         ));
         let visible = label == view_label(&current) && !state.lock().tasks_open;
@@ -810,6 +862,40 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         };
         if changed {
             wv::set_memory_low(&webview, !visible);
+        }
+    }
+    if let Some(panel_view) = app.get_webview_window("erp-panel") {
+        let main_focused = app
+            .get_webview_window("main")
+            .and_then(|window| window.is_focused().ok())
+            .unwrap_or(false);
+        let panel_focused = panel_view.is_focused().unwrap_or(false);
+        if focus_mode && current.starts_with("web-") && (main_focused || panel_focused) {
+            let overlay_width = if state.lock().panel_collapsed {
+                48.0
+            } else {
+                panel.min((width - 320.0).max(280.0))
+            };
+            let main_window = app.get_webview_window("main");
+            let scale = main_window
+                .as_ref()
+                .and_then(|window| window.scale_factor().ok())
+                .unwrap_or(1.0);
+            let screen_origin = main_window
+                .as_ref()
+                .and_then(|window| window.inner_position().ok());
+            let x = screen_origin.map_or(0.0, |point| point.x as f64 / scale)
+                + (width - overlay_width).max(0.0);
+            let y = screen_origin.map_or(0.0, |point| point.y as f64 / scale)
+                + ERP_TABS_HEIGHT;
+            let _ = panel_view.set_position(LogicalPosition::new(x, y));
+            let _ = panel_view.set_size(LogicalSize::new(
+                overlay_width,
+                (height - ERP_TABS_HEIGHT).max(100.0),
+            ));
+            let _ = panel_view.show();
+        } else {
+            let _ = panel_view.hide();
         }
     }
 }
@@ -1065,7 +1151,11 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
         WebviewUrl::External(urls::start_url(service).parse()?),
     )
     .additional_browser_args(BROWSER_ARGS)
-    .initialization_script(AGENT)
+    .initialization_script(concat!(
+        include_str!("../page-scripts/agent.js"),
+        "\n",
+        include_str!("../erp-tools/erp-focus-shortcut.js"),
+    ))
     .on_navigation(move |url| {
         let allowed = url.as_str() == "about:blank"
             || urls::is_workspace_url(&navigation_service, url.as_str());

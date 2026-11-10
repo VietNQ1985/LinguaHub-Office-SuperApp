@@ -3822,7 +3822,7 @@
             </div>
             <details><summary>Gemini cho đối chiếu file</summary>
               <label>Gemini API key<input data-field="gemini-key" type="password" autocomplete="off"></label>
-              <div class="m1a-m7k-models"><label>Model Gemini<select data-field="gemini-model">${geminiModelOptionsHtml()}</select></label><label><input data-field="gemini-fallback" type="checkbox"> Tự chuyển model khi không khả dụng</label></div>
+              <div class="m1a-m7k-models"><label>Model Gemini<select data-field="gemini-model">${geminiModelOptionsHtml()}</select></label><label><input data-field="gemini-fallback" type="checkbox" checked disabled> Tự chuyển model/key khi chạm quota</label></div>
               <button class="key-action" data-action="save-compare-key" type="button">Lưu key đối chiếu</button>
               <button class="key-action danger" data-action="clear-compare-key" type="button">Xóa key đối chiếu</button>
               <p>Đối chiếu file gửi nội dung file anh chọn đến Gemini khi bấm Đối chiếu file.</p>
@@ -3934,6 +3934,8 @@
         const apiKey = geminiApiKeysFromModal(activeModal);
         if (!apiKey.length) throw new Error('Chưa có Gemini API key. Dán key vào popup hoặc nạp key đã lưu; key chỉ lưu cục bộ trên máy này.');
         const geminiSession = createGeminiSession(activeModal);
+        // File comparison must recover automatically from per-model/key quota limits.
+        geminiSession.autoFallback = true;
       const ensured = await ensureM7KRead(activeModal);
       activeModal = ensured.modal;
       promoteOutput(activeModal, 'comparison');
@@ -6184,7 +6186,8 @@
       fillGoogleVisionKeyFields(modal);
       fillGeminiKeyFields(modal);
     fillGeminiModelFields(modal);
-      modal.querySelector('[data-field="gemini-fallback"]').checked = readGeminiAutoFallback(storage);
+      modal.querySelector('[data-field="gemini-fallback"]').checked = true;
+      modal.querySelector('[data-field="gemini-fallback"]').disabled = true;
       if (preserveRead) {
         setSourceInfo(modal, cachedRead.source);
         setStatus(modal, '✓ Đã giữ dữ liệu ĐKKN đã đọc trong phiên này; không mở lại phiếu ĐKKN.', 'ok');
@@ -6238,7 +6241,7 @@
       modal.querySelector('[data-field="gemini-fallback"]').addEventListener('change', event => {
         try {
           saveGeminiAutoFallback(browserStorage(), event.target.checked);
-          setStatus(modal, event.target.checked ? '✓ Đã bật tự chuyển model khi model không khả dụng; hết quota sẽ dừng.' : '✓ Đã tắt tự chuyển model; chỉ dùng model đang chọn.', 'ok');
+          setStatus(modal, event.target.checked ? '✓ Đã bật tự chuyển model và API key dự phòng khi chạm quota.' : '✓ Đã tắt tự chuyển model; chỉ dùng model đang chọn.', 'ok');
         } catch (error) {
           setStatus(modal, `⚠ ${error.message || 'Không lưu được chế độ chuyển model.'}`, 'error');
         }

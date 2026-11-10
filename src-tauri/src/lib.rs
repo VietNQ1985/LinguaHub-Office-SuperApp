@@ -166,10 +166,12 @@ pub fn run() {
                 LogicalSize::new(size.width as f64 / scale, size.height as f64 / scale),
             )?;
             let _ = wv::install_permissions(&ui, ui_permissions(&handle));
-
             let resize_handle = handle.clone();
             window.on_window_event(move |event| match event {
-                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                WindowEvent::Resized(_)
+                | WindowEvent::Moved(_)
+                | WindowEvent::Focused(_)
+                | WindowEvent::ScaleFactorChanged { .. } => {
                     workspace::layout(&resize_handle)
                 }
                 WindowEvent::CloseRequested { api, .. } => {
@@ -200,6 +202,8 @@ pub fn run() {
             commands::window_tray,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
+            commands::workspace_focus_mode,
+            commands::workspace_focus_panel_state,
             commands::workspace_sidebar_layout,
             commands::workspace_service_tabs_layout,
             commands::workspace_unread,

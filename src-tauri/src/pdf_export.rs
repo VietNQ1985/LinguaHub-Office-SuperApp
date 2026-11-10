@@ -863,7 +863,9 @@ fn prepare_visible_windows_signature(
         PdfSignatureAppearance::CompactRight => (115.0, 36.0),
         PdfSignatureAppearance::DetailedLeft => (220.0, 99.0),
     };
-    let scale = (available_width / desired_width).min(available_height / desired_height).min(1.0);
+    let scale = (available_width / desired_width)
+        .min(available_height / desired_height)
+        .min(1.0);
     let signature_width = desired_width * scale;
     let signature_height = desired_height * scale;
     let position = position.unwrap_or(match appearance_style {
@@ -872,10 +874,14 @@ fn prepare_visible_windows_signature(
     });
     let signature_left = match position {
         PdfSignaturePosition::TopLeft | PdfSignaturePosition::BottomLeft => left + margin,
-        PdfSignaturePosition::TopRight | PdfSignaturePosition::BottomRight => right - margin - signature_width,
+        PdfSignaturePosition::TopRight | PdfSignaturePosition::BottomRight => {
+            right - margin - signature_width
+        }
     };
     let signature_bottom = match position {
-        PdfSignaturePosition::TopLeft | PdfSignaturePosition::TopRight => top - margin - signature_height,
+        PdfSignaturePosition::TopLeft | PdfSignaturePosition::TopRight => {
+            top - margin - signature_height
+        }
         PdfSignaturePosition::BottomLeft | PdfSignaturePosition::BottomRight => bottom + margin,
     };
     let page_count = document.page_count()?.max(1);
@@ -3407,7 +3413,9 @@ try {
 
     #[test]
     fn erp_attachment_scan_stays_inside_the_attachment_field() {
-        assert!(ERP_SCAN_SCRIPT.contains("if (labelEls.some(other => sibling.contains(other))) break"));
+        assert!(
+            ERP_SCAN_SCRIPT.contains("if (labelEls.some(other => sibling.contains(other))) break")
+        );
     }
 
     #[test]
@@ -3539,9 +3547,13 @@ $signedCms.CheckSignature($true)
             (PdfSignatureAppearance::DetailedLeft, "detailed-left"),
         ] {
             eprintln!("Signing {suffix} test PDF...");
-            let signed =
-                sign_pdf_bytes_with_windows_certificate(&base, &requested_thumbprint, appearance, None)
-                    .unwrap();
+            let signed = sign_pdf_bytes_with_windows_certificate(
+                &base,
+                &requested_thumbprint,
+                appearance,
+                None,
+            )
+            .unwrap();
             let output = folder.join(format!("signature-verification-{suffix}-{}.pdf", now_ms()));
             fs::write(&output, &signed).unwrap();
 

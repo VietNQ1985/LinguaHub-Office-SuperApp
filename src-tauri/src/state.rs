@@ -34,6 +34,9 @@ pub struct Inner {
     pub views: HashSet<String>,
     pub panel_width: f64,
     pub panel_collapsed: bool,
+    /// ERP focus mode makes the native webview use the full width below its tab strip.
+    pub focus_mode: bool,
+    pub focus_restore_maximized: bool,
     /// Logical x offset reserved for the React office sidebar.
     pub sidebar_width: f64,
     /// Logical height reserved for the React message service switcher.
@@ -93,6 +96,8 @@ impl AppState {
             views: HashSet::new(),
             panel_width: preferences["panelWidth"].as_f64().unwrap_or(360.0),
             panel_collapsed: false,
+            focus_mode: false,
+            focus_restore_maximized: false,
             sidebar_width: 232.0,
             service_tabs_height: 0.0,
             chat_read_authorized: false,

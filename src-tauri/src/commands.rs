@@ -25,7 +25,7 @@ fn fail(error: impl std::fmt::Display) -> String {
 }
 
 fn trusted(webview: &Webview) -> Res<()> {
-    if webview.label() == "ui" {
+    if matches!(webview.label(), "ui" | "erp-panel") {
         Ok(())
     } else {
         Err("Untrusted sender".into())
@@ -83,6 +83,7 @@ pub fn workspace_panel_layout(
         inner.panel_collapsed = collapsed;
     }
     workspace::layout(&app);
+    let _ = app.emit("erp-panel-state", focus_panel_snapshot(&app, &state));
     if persist {
         let _ = state.store.set_panel_width(panel as i64);
     }
@@ -100,6 +101,81 @@ pub fn workspace_sidebar_layout(
     state.lock().sidebar_width = if collapsed { 68.0 } else { 232.0 };
     workspace::layout(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub fn workspace_focus_mode(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    let window = app.get_window("main");
+    let restore_maximized = {
+        let mut inner = state.lock();
+        let restore = if enabled {
+            window
+                .as_ref()
+                .and_then(|window| window.is_maximized().ok())
+                .unwrap_or(false)
+        } else {
+            inner.focus_restore_maximized
+        };
+        if enabled {
+            inner.focus_restore_maximized = restore;
+        }
+        inner.focus_mode = enabled;
+        restore
+    };
+    if let Some(window) = window {
+        if enabled {
+            let _ = window.maximize();
+        } else if !restore_maximized {
+            let _ = window.unmaximize();
+        }
+    }
+    if enabled {
+        if let Err(error) = workspace::recreate_erp_focus_panel(&app) {
+            log::error!("could not create the floating ERP panel: {error:#}");
+            eprintln!("could not create the floating ERP panel: {error:#}");
+            return Err(fail(error));
+        }
+        if let Some(panel) = app.get_webview_window("erp-panel") {
+            let _ = panel.set_focus();
+        }
+    }
+    workspace::layout(&app);
+    let _ = app.emit("erp-panel-state", focus_panel_snapshot(&app, &state));
+    Ok(())
+}
+
+fn focus_panel_snapshot(app: &AppHandle, state: &AppState) -> Value {
+    let (collapsed, width) = {
+        let inner = state.lock();
+        (inner.panel_collapsed, inner.panel_width)
+    };
+    let active_tab = workspace::current_view(app)
+        .filter(|(id, _)| id.starts_with("web-"))
+        .and_then(|(id, view)| {
+            let url = view.url().ok()?;
+            Some(json!({
+                "id": id,
+                "name": url.host_str().unwrap_or("ERP"),
+                "address": url.origin().ascii_serialization(),
+            }))
+        });
+    json!({"collapsed": collapsed, "width": width, "activeTab": active_tab})
+}
+
+#[tauri::command]
+pub fn workspace_focus_panel_state(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Res<Value> {
+    trusted(&webview)?;
+    Ok(focus_panel_snapshot(&app, &state))
 }
 
 #[tauri::command]
@@ -594,9 +670,8 @@ pub async fn pdf_export_scan_erp_page(
             fallback = Some(snap);
         }
     }
-    fallback.ok_or_else(|| {
-        "Không quét được trang ERP. Anh chờ phiếu mở xong rồi bấm quét lại.".into()
-    })
+    fallback
+        .ok_or_else(|| "Không quét được trang ERP. Anh chờ phiếu mở xong rồi bấm quét lại.".into())
 }
 
 fn expand_truncated_pdf_name(
@@ -643,13 +718,17 @@ pub async fn pdf_export_convert_erp_attachment(
 
     // Re-scan live DOM so a stale attachment URL (for example href="#", which
     // resolves to the ERP form itself) cannot be mistaken for the file.
-    let capture_scan = crate::pdf_export::ERP_SCAN_SCRIPT
-        .replacen("const capture = false;", "const capture = true;", 1);
-    let live_snapshot = wv::eval_json(&view, &capture_scan)
-        .await
-        .ok();
+    let capture_scan = crate::pdf_export::ERP_SCAN_SCRIPT.replacen(
+        "const capture = false;",
+        "const capture = true;",
+        1,
+    );
+    let live_snapshot = wv::eval_json(&view, &capture_scan).await.ok();
     let normalize_name = |name: &str| {
-        name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     };
     let requested_name = normalize_name(&display_name);
     let live_attachment = live_snapshot
@@ -658,7 +737,9 @@ pub async fn pdf_export_convert_erp_attachment(
         .and_then(|attachments| {
             let matches_name = |attachment: &Value| {
                 ["displayName", "fullName"].into_iter().any(|key| {
-                    let Some(name) = attachment[key].as_str() else { return false };
+                    let Some(name) = attachment[key].as_str() else {
+                        return false;
+                    };
                     let name = normalize_name(name);
                     if name == requested_name {
                         return true;
@@ -667,7 +748,9 @@ pub async fn pdf_export_convert_erp_attachment(
                         .strip_suffix("...")
                         .or_else(|| name.strip_suffix('…'))
                         .map(str::trim_end);
-                    prefix.is_some_and(|prefix| prefix.len() >= 12 && requested_name.starts_with(prefix))
+                    prefix.is_some_and(|prefix| {
+                        prefix.len() >= 12 && requested_name.starts_with(prefix)
+                    })
                 })
             };
             attachments
@@ -676,7 +759,9 @@ pub async fn pdf_export_convert_erp_attachment(
                     attachment["id"].as_str() == Some(att_id.as_str()) && matches_name(attachment)
                 })
                 .or_else(|| {
-                    let mut matches = attachments.iter().filter(|attachment| matches_name(attachment));
+                    let mut matches = attachments
+                        .iter()
+                        .filter(|attachment| matches_name(attachment));
                     let first = matches.next()?;
                     matches.next().is_none().then_some(first)
                 })

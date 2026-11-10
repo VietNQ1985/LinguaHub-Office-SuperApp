@@ -90,6 +90,9 @@ h2, h3, h4 { color: var(--text); }
 .erp-subtab-tool { flex: 0 0 auto; align-self: center; height: 30px; margin-left: 5px; padding: 0 11px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--surface); font-size: 12px; }
 .erp-subtab-tool:hover, .erp-subtab-tool.active { border-color: var(--accent); color: var(--accent); }
 .erp-subtabs-hint { align-self: center; color: var(--muted); font-size: 12px; }
+.erp-subtabs-actions { position: sticky; right: 0; z-index: 2; display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; padding: 0 0 0 8px; background: var(--soft); }
+.erp-subtab-icon { display: inline-flex; flex: 0 0 auto; min-width: 30px; height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--surface); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.erp-subtab-icon:hover, .erp-subtab-icon.active { border-color: var(--border); color: var(--accent); background: var(--surface); }
 .erp-empty-state { display: grid; width: 100%; height: 100%; place-items: center; padding: 24px; background: var(--bg); }
 .erp-empty-state > div { max-width: 440px; padding: 34px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: center; box-shadow: 0 12px 36px rgb(15 23 42 / 7%); }
 .erp-empty-state > div > span { color: var(--accent); font-size: 30px; }
@@ -194,6 +197,42 @@ h2, h3, h4 { color: var(--text); }
   position: absolute; top: 8px; left: 7px; z-index: 2; width: 40px; height: 42px;
   border: 0; border-radius: 8px; background: var(--soft); color: var(--text); font-size: 25px;
 }
+.office-app.erp-focus-mode > .office-sidebar,
+.office-app.erp-focus-mode .office-topbar { display: none !important; }
+.office-app.erp-focus-mode .office-main { flex: 1 1 100%; width: 100%; min-width: 0; }
+.office-app.erp-focus-mode .erp-subtabs { flex: 0 0 32px; min-height: 32px; }
+.office-app.erp-focus-mode .workspace-row { position: relative; }
+.office-app.erp-focus-mode .workspace { width: 100%; flex: 1 1 100%; }
+.office-app.erp-focus-mode .panel-resizer { display: none; }
+.office-app.erp-focus-mode .workspace-row > .panel,
+.office-app.erp-focus-mode .workspace-row > .panel-resizer { display: none !important; }
+.office-app.erp-focus-mode .panel {
+  position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; height: 100%;
+  border-left: 1px solid var(--border); box-shadow: -12px 0 28px rgb(15 23 42 / 16%);
+}
+.office-app.erp-focus-mode .panel-collapsed {
+  width: 48px !important; padding: 0; border: 0; background: transparent; box-shadow: none;
+}
+.office-app.erp-focus-mode .expand-panel {
+  top: 12px; left: auto; right: 8px; width: 38px; height: 38px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--accent);
+  box-shadow: 0 3px 12px rgb(15 23 42 / 14%); font-size: 18px;
+}
+.focus-panel-toggle {
+  position: absolute; z-index: 5; top: 8px; right: 8px; width: 32px; height: 32px;
+  display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); background: var(--surface); box-shadow: 0 2px 8px rgb(15 23 42 / 10%);
+}
+.focus-panel-toggle:hover { color: var(--accent); }
+.erp-floating-panel-root { display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); }
+.erp-floating-panel-collapsed { padding:6px; background:transparent; }
+.erp-floating-panel-handle { display:grid; place-items:center; width:36px; height:36px; margin-left:auto; border:1px solid var(--border); border-radius:10px; color:var(--accent); background:var(--surface); box-shadow:0 3px 12px rgb(15 23 42 / 18%); }
+.erp-floating-panel-toolbar { display:flex; flex:0 0 42px; align-items:center; gap:5px; padding:5px 7px; border-bottom:1px solid var(--border); background:var(--surface); }
+.erp-floating-panel-toolbar button { display:flex; align-items:center; gap:5px; height:30px; padding:0 9px; border:1px solid transparent; border-radius:7px; color:var(--muted); background:transparent; font-size:12px; }
+.erp-floating-panel-toolbar button.active { border-color:var(--border); color:var(--accent); background:var(--soft); }
+.erp-floating-panel-toolbar .erp-floating-panel-close { width:30px; justify-content:center; margin-left:auto; padding:0; }
+.erp-floating-panel-content { flex:1 1 auto; min-width:0; min-height:0; overflow:auto; background:var(--bg); }
+.erp-floating-panel-content > .sample-file-panel { min-height:100%; }
 .assistant-shell { min-width: 0; min-height: 100%; display: flex; flex-direction: column; }
 .assistant-heading { padding: 22px 22px 12px; }
 .assistant-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.4px; font-weight: 700; }
