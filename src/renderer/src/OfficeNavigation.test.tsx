@@ -14,7 +14,7 @@ test('sidebar routes to the selected area and shows the application version and 
   try {
     await act(async () => root.render(createElement(OfficeSidebar, { active: 'dashboard', collapsed: false, onNavigate: navigate, onToggle: vi.fn(), onManageWorkspaces: vi.fn() })))
     expect(dom.window.document.querySelector('[aria-current="page"]')?.textContent).toContain('Tổng quan')
-    expect(dom.window.document.body.textContent).toContain('v0.4.16')
+    expect(dom.window.document.body.textContent).toContain('v0.4.18')
     expect(dom.window.document.body.textContent).toContain('© 2026 Viet Nguyen Quoc')
     const messages = Array.from(dom.window.document.querySelectorAll('button')).find(button => button.textContent?.includes('Tin nhắn'))!
     await act(async () => messages.click())

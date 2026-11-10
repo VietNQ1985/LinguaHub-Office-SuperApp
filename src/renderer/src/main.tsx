@@ -513,43 +513,54 @@ function App() {
   const [panelCollapsed, setPanelCollapsed] = React.useState(false)
   const [erpFocusMode, setErpFocusMode] = React.useState(false)
   const panelCollapsedBeforeFocus = React.useRef(false)
-  const openErpRef = React.useRef<(() => Promise<void>) | null>(null)
+  const openErpRef = React.useRef<(() => Promise<boolean>) | null>(null)
   const [status, setStatus] = React.useState('Đang mở…')
   const isErpWorkspaceActive = activeArea === 'projects' && erpOpen && !tasksOpen
+  const focusTogglePending = React.useRef(false)
   React.useEffect(() => {
-    void window.lingua.setWorkspaceFocusMode(erpFocusMode).catch(error => {
-      console.error('Could not switch ERP focus mode', error)
-      if (erpFocusMode) setStatus('Chưa mở được panel ERP nổi. Anh thử lại sau khi tải lại ứng dụng.')
-    })
-  }, [erpFocusMode])
+    if (!erpFocusMode || isErpWorkspaceActive) return
+    void window.lingua
+      .setWorkspaceFocusMode(false)
+      .catch(error => console.error('Could not leave ERP focus mode', error))
+      .finally(() => {
+        setErpFocusMode(false)
+        setPanelCollapsed(panelCollapsedBeforeFocus.current)
+      })
+  }, [erpFocusMode, isErpWorkspaceActive])
   const toggleErpFocusMode = React.useCallback(() => {
-    if (erpFocusMode) {
-      setErpFocusMode(false)
-      setPanelCollapsed(panelCollapsedBeforeFocus.current)
-      return
-    }
-    const enter = () => {
-      panelCollapsedBeforeFocus.current = panelCollapsed
-      setPanelCollapsed(false)
-      setErpFocusMode(true)
-    }
-    if (isErpWorkspaceActive) enter()
-    else if (openErpRef.current) {
-      void openErpRef.current().then(enter).catch(() => setStatus('Chưa mở được tab ERP để chuyển sang chế độ tập trung.'))
-    }
+    if (focusTogglePending.current) return
+    focusTogglePending.current = true
+    void (async () => {
+      try {
+        if (erpFocusMode) {
+          await window.lingua.setWorkspaceFocusMode(false)
+          setErpFocusMode(false)
+          setPanelCollapsed(panelCollapsedBeforeFocus.current)
+          return
+        }
+        const opened = isErpWorkspaceActive || (await openErpRef.current?.())
+        if (!opened) {
+          setStatus('Chưa mở được tab ERP để chuyển sang chế độ tập trung.')
+          return
+        }
+        panelCollapsedBeforeFocus.current = panelCollapsed
+        await window.lingua.setWorkspaceFocusMode(true)
+        // The focus panel floats above the ERP webview. Keep it collapsed by
+        // default so it does not cover ERP columns and toolbar controls.
+        setPanelCollapsed(false)
+        setErpFocusMode(true)
+      } catch (error) {
+        console.error('Could not switch ERP focus mode', error)
+        setStatus(erpFocusMode ? 'Chưa thoát được chế độ tập trung ERP.' : 'Chưa bật được chế độ tập trung ERP.')
+      } finally {
+        focusTogglePending.current = false
+      }
+    })()
   }, [erpFocusMode, isErpWorkspaceActive, panelCollapsed])
   React.useEffect(() => {
     const toggle = () => toggleErpFocusMode()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'F11' || event.altKey || event.ctrlKey || event.metaKey) return
-      event.preventDefault()
-      event.stopPropagation()
-      toggleErpFocusMode()
-    }
-    window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('linguahub:erp-focus-toggle', toggle)
     return () => {
-      window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('linguahub:erp-focus-toggle', toggle)
     }
   }, [erpFocusMode, isErpWorkspaceActive, toggleErpFocusMode])
@@ -665,7 +676,7 @@ function App() {
     (app: AppId) => open(app, activeArea === 'meetings' ? 'meetings' : undefined),
     [open, activeArea],
   )
-  const openErp = React.useCallback(async () => {
+  const openErp = React.useCallback(async (): Promise<boolean> => {
     setActiveArea('projects')
     setErpOpen(true)
     setSampleFinderOpen(false)
@@ -683,25 +694,27 @@ function App() {
       webTabs.find(value => value.id === savedId) ||
       webTabs.at(-1)
     if (tab) {
-      if (await openWeb(tab)) return
+      if (await openWeb(tab)) return true
       // A saved tab can become stale after its native WebView was closed. Recover into a fresh
       // Arito tab instead of leaving F11 on an empty ERP hub.
     }
     if (webTabs.length >= 20) {
       setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.')
-      return
+      return false
     }
     const initial = {
       id: 'web-' + crypto.randomUUID(),
       address: 'https://id.arito.vn/app?id=appdrawer',
       name: 'ERP Arito',
     }
-    if (await openWeb(initial)) {
+    const opened = await openWeb(initial)
+    if (opened) {
       knownWebTabs.current.add(initial.id)
       setWebTabs(values =>
         values.some(value => value.id === initial.id) ? values : [...values, initial],
       )
     }
+    return opened
   }, [activeWeb, openWeb, webTabs])
   openErpRef.current = openErp
   const showEmptyErp = () => {
@@ -1246,7 +1259,7 @@ function App() {
                 onClick={() => setPanelCollapsed(value => !value)}
               >
                 {panelCollapsed ? <PanelRightOpen size={15} aria-hidden="true" /> : <PanelRightClose size={15} aria-hidden="true" />}
-                <span>Panel phải</span>
+                <span>{panelCollapsed ? 'Mở panel' : 'Thu gọn panel'}</span>
               </button>
               <button
                 type="button"

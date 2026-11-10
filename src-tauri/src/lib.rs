@@ -33,9 +33,33 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl, WindowEvent,
+};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 static UNLOADED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_erp_focus_shortcut<R: tauri::Runtime>(app: &AppHandle<R>, enabled: bool) {
+    let shortcut = app.global_shortcut();
+    if enabled && !shortcut.is_registered("F11") {
+        if let Err(error) = shortcut.on_shortcut("F11", |app, _, event| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            // Registration is already scoped to the app's focused windows. Avoid
+            // querying native focus here: embedded WebView focus can make the
+            // parent report false on Windows and silently swallow F11.
+            let _ = app.emit_to("ui", "erp-focus-toggle", ());
+        }) {
+            log::warn!("could not register ERP F11 shortcut: {error}");
+        }
+    } else if !enabled && shortcut.is_registered("F11") {
+        if let Err(error) = shortcut.unregister("F11") {
+            log::warn!("could not unregister ERP F11 shortcut: {error}");
+        }
+    }
+}
 
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_window("main") {
@@ -86,7 +110,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_main(app),
             "quit" => {
                 app.state::<AppState>().lock().quitting = true;
-                app.exit(0);
+                for (label, window) in app.webview_windows() {
+                    if label != "main" {
+                        let _ = window.close();
+                    }
+                }
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.hide();
+                }
+                let exit_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if !UNLOADED.swap(true, Ordering::SeqCst) {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            ai::unload_used_models(),
+                        )
+                        .await;
+                    }
+                    exit_app.exit(0);
+                });
             }
             service @ ("whatsapp" | "teams" | "zalo") => workspace::activate(app, service),
             _ => {}
@@ -118,6 +160,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(models::SCHEME, |context, request, responder| {
             let app = context.app_handle().clone();
             let path = request.uri().path().to_owned();
@@ -147,6 +190,7 @@ pub fn run() {
                 .min_inner_size(1000.0, 600.0)
                 .visible(true)
                 .build()?;
+            set_erp_focus_shortcut(&handle, true);
             let size = window.inner_size()?;
             let scale = window.scale_factor()?;
             let ui = WebviewBuilder::new("ui", WebviewUrl::App("index.html".into()))
@@ -170,9 +214,20 @@ pub fn run() {
             window.on_window_event(move |event| match event {
                 WindowEvent::Resized(_)
                 | WindowEvent::Moved(_)
-                | WindowEvent::Focused(_)
                 | WindowEvent::ScaleFactorChanged { .. } => {
                     workspace::layout(&resize_handle)
+                }
+                WindowEvent::Focused(focused) => {
+                    if *focused {
+                        set_erp_focus_shortcut(&resize_handle, true);
+                    } else {
+                        let panel_focused = resize_handle
+                            .get_webview_window("erp-panel")
+                            .and_then(|panel| panel.is_focused().ok())
+                            .unwrap_or(false);
+                        set_erp_focus_shortcut(&resize_handle, panel_focused);
+                    }
+                    workspace::layout(&resize_handle);
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     // Closing hides to the tray; "Thoát hoàn toàn" quits.
@@ -333,7 +388,11 @@ pub fn run() {
                     api.prevent_exit();
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        ai::unload_used_models().await;
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            ai::unload_used_models(),
+                        )
+                        .await;
                         handle.exit(0);
                     });
                 }

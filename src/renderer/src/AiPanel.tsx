@@ -167,8 +167,10 @@ function loadFavoritePrompts(): FavoritePromptItem[] {
 
 export function AiPanel({
   workspaceActive = true,
+  initialSettings = false,
   onBackToErpFiles,
 }: {
+  initialSettings?: boolean
   workspaceActive?: boolean
   onBackToErpFiles?: () => void
 }) {
@@ -198,7 +200,7 @@ export function AiPanel({
 
   const [meetingMode, setMeetingMode] = useState(false)
   const [captionsMode, setCaptionsMode] = useState(false)
-  const [mode, setMode] = useState<PanelMode>('translate')
+  const [mode, setMode] = useState<PanelMode>(initialSettings ? 'settings' : 'translate')
   useEffect(
     () =>
       window.lingua.onShortcut?.(action => {

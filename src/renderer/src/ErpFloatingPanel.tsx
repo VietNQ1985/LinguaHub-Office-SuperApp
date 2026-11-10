@@ -14,7 +14,7 @@ type PanelState = {
 
 export function ErpFloatingPanel() {
   const [state, setState] = React.useState<PanelState>({ collapsed: true, width: 360, activeTab: null })
-  const [view, setView] = React.useState<'files' | 'ai'>('files')
+  const [view, setView] = React.useState<'files' | 'ai' | 'settings'>('files')
 
   React.useEffect(() => {
     let alive = true
@@ -47,10 +47,11 @@ export function ErpFloatingPanel() {
           className="erp-floating-panel-handle"
           type="button"
           title="Mở tiện ích ERP"
-          aria-label="Mở tiện ích ERP"
+          aria-label="Mở panel phải"
           onClick={togglePanel}
         >
           <PanelRightOpen size={19} aria-hidden="true" />
+          <span>Mở panel</span>
         </button>
       </main>
     )
@@ -69,12 +70,13 @@ export function ErpFloatingPanel() {
           <PanelRightClose size={17} aria-hidden="true" />
         </button>
       </div>
+      <button type="button" className="text-button" onClick={() => setView('settings')}>Cài đặt</button>
       <section className="erp-floating-panel-content">
         {view === 'files' ? (
-          <SampleFilePanel activeTab={state.activeTab} onSwitchToAi={() => setView('ai')} />
+          <SampleFilePanel onOpenSettings={() => setView('settings')} activeTab={state.activeTab} onSwitchToAi={() => setView('ai')} />
         ) : (
           <React.Suspense fallback={<div role="status" className="assistant-loading">Đang mở trợ lý AI…</div>}>
-            <AiPanel workspaceActive onBackToErpFiles={() => setView('files')} />
+            <AiPanel key={view} initialSettings={view === 'settings'} workspaceActive onBackToErpFiles={() => setView('files')} />
           </React.Suspense>
         )}
       </section>

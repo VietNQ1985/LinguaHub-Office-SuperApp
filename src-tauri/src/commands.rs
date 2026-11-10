@@ -104,10 +104,10 @@ pub fn workspace_sidebar_layout(
 }
 
 #[tauri::command]
-pub fn workspace_focus_mode(
+pub async fn workspace_focus_mode(
     webview: Webview,
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     enabled: bool,
 ) -> Res<()> {
     trusted(&webview)?;
@@ -134,18 +134,35 @@ pub fn workspace_focus_mode(
         } else if !restore_maximized {
             let _ = window.unmaximize();
         }
+        if !enabled {
+            let _ = window.show();
+        }
     }
     if enabled {
         if let Err(error) = workspace::recreate_erp_focus_panel(&app) {
             log::error!("could not create the floating ERP panel: {error:#}");
             eprintln!("could not create the floating ERP panel: {error:#}");
+            state.lock().focus_mode = false;
+            if !restore_maximized {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.unmaximize();
+                }
+            }
+            workspace::layout(&app);
             return Err(fail(error));
         }
         if let Some(panel) = app.get_webview_window("erp-panel") {
             let _ = panel.set_focus();
         }
+    } else if let Some(panel) = app.get_webview_window("erp-panel") {
+        let _ = panel.hide();
     }
     workspace::layout(&app);
+    if !enabled {
+        if let Some(window) = app.get_window("main") {
+            let _ = window.set_focus();
+        }
+    }
     let _ = app.emit("erp-panel-state", focus_panel_snapshot(&app, &state));
     Ok(())
 }
@@ -212,12 +229,15 @@ pub async fn workspace_open(webview: Webview, app: AppHandle, service: String) -
 pub async fn web_tab_open(
     webview: Webview,
     app: AppHandle,
+    state: State<'_, AppState>,
     id: String,
     address: String,
     close: bool,
 ) -> Res<()> {
     trusted(&webview)?;
-    workspace::open_web_tab(&app, &id, &address, close).map_err(fail)
+    workspace::open_web_tab(&app, &id, &address, close).map_err(fail)?;
+    let _ = app.emit_to("erp-panel", "erp-panel-state", focus_panel_snapshot(&app, &state));
+    Ok(())
 }
 
 #[tauri::command]

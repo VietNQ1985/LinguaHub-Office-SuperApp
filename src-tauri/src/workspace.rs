@@ -17,6 +17,7 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, Webview, WebviewUrl,
+    WindowEvent,
 };
 #[cfg(windows)]
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment;
@@ -54,7 +55,18 @@ pub fn recreate_erp_focus_panel<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
             )
         })
         .on_new_window(|_url, _features| NewWindowResponse::Deny);
-    let _ = panel.build()?;
+    let panel = panel.build()?;
+    let focus_app = app.clone();
+    panel.on_window_event(move |event| {
+        if let WindowEvent::Focused(focused) = event {
+            let main_focused = focus_app
+                .get_window("main")
+                .and_then(|window| window.is_focused().ok())
+                .unwrap_or(false);
+            crate::set_erp_focus_shortcut(&focus_app, *focused || main_focused);
+            layout(&focus_app);
+        }
+    });
     Ok(())
 }
 
@@ -588,8 +600,6 @@ fn open_web_tab_with_options(
             .additional_browser_args(BROWSER_ARGS)
             .initialization_script(concat!(
                 include_str!("../page-scripts/erp-password-manager.js"),
-                "\n",
-                include_str!("../erp-tools/erp-focus-shortcut.js"),
             ))
             .on_navigation(move |url| {
                 if url.scheme() == "linguahub-local" && url.host_str() == Some("open") {
@@ -801,7 +811,12 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         } else {
             inner.panel_width
         };
-        let divider = if inner.panel_collapsed { 0.0 } else { 6.0 };
+        let panel = if inner.focus_mode && !inner.panel_collapsed { (width * 0.30).clamp(360.0, 560.0).min((width - 520.0).max(280.0)) } else { panel };
+        let divider = if inner.panel_collapsed || inner.focus_mode {
+            0.0
+        } else {
+            6.0
+        };
         (
             inner.current.clone(),
             panel,
@@ -839,7 +854,9 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
                 }
         };
         let left = if focus_mode { 0.0 } else { sidebar_width };
-        let right_reserved = if focus_mode { 0.0 } else { panel + divider };
+        // The focus panel is a separate native window. Reserve its width in the
+        // ERP webview so the panel docks beside the page instead of covering it.
+        let right_reserved = panel + divider;
         let _ = webview.set_position(LogicalPosition::new(left, top));
         let _ = webview.set_size(LogicalSize::new(
             (width - left - right_reserved).max(300.0),
@@ -866,17 +883,17 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     }
     if let Some(panel_view) = app.get_webview_window("erp-panel") {
         let main_focused = app
-            .get_webview_window("main")
+            .get_window("main")
             .and_then(|window| window.is_focused().ok())
             .unwrap_or(false);
         let panel_focused = panel_view.is_focused().unwrap_or(false);
         if focus_mode && current.starts_with("web-") && (main_focused || panel_focused) {
             let overlay_width = if state.lock().panel_collapsed {
-                48.0
+                56.0
             } else {
                 panel.min((width - 320.0).max(280.0))
             };
-            let main_window = app.get_webview_window("main");
+            let main_window = app.get_window("main");
             let scale = main_window
                 .as_ref()
                 .and_then(|window| window.scale_factor().ok())
@@ -1153,8 +1170,6 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
     .additional_browser_args(BROWSER_ARGS)
     .initialization_script(concat!(
         include_str!("../page-scripts/agent.js"),
-        "\n",
-        include_str!("../erp-tools/erp-focus-shortcut.js"),
     ))
     .on_navigation(move |url| {
         let allowed = url.as_str() == "about:blank"

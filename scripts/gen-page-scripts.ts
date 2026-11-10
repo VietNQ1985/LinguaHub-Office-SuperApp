@@ -6,6 +6,7 @@ import { buildComposerScript } from '../src/page-scripts/chat-sender'
 import { meetingCaptionScript } from '../src/page-scripts/meeting-captions'
 import { ERP_GLOSSARY, ERP_GLOSSARY_PROMPT } from '../src/shared/erp-glossary'
 import { buildCallScript, buildFocusSearchScript, buildOpenSearchResultScript, buildOpenTitleScript } from '../src/page-scripts/zalo-pc'
+import { buildErpPasswordManagerScript } from '../src/page-scripts/erp-password-manager'
 
 // Writes the fixed scripts that the Rust side runs inside service pages and Zalo PC.
 // They are generated from the same TypeScript builders (and unit tests) as the Electron app,
@@ -37,6 +38,7 @@ write('zalo-web-title.js', `(document.querySelector('header#header .header-title
 
 // ERP glossary used by the AI prompts (src-tauri/src/ai.rs).
 write('erp-glossary.json', JSON.stringify({ entries: ERP_GLOSSARY, prompt: ERP_GLOSSARY_PROMPT }))
+write('erp-password-manager.js', buildErpPasswordManagerScript())
 
 // The page agent (observers + shortcuts) is bundled into one self-contained IIFE.
 const result = await build({
