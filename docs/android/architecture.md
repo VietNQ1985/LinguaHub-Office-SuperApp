@@ -140,7 +140,7 @@ Android documentation notes emulator microphone recording may be unavailable; us
 - Source review: completed against the current Windows implementation and configuration.
 - Android tool discovery: `adb`, `java`, `cargo`, `rustup`, `gradle`, `npx` and Android SDK environment variables were not discoverable in the current shell; no Android device is attached.
 - Build probe: attempted `npx tauri android init` in an isolated worktree. It stopped immediately because `npx` is unavailable. No generated Android project, APK, or permission test resulted.
-- `git diff --check`: must be run on the final commit before update (see PR checks).
+- `git diff --check`: passed on the final documentation change.
 - Windows build/tests: not run for this documentation-only change. No Windows source/config is changed by this Issue #8 commit. Existing unrelated local Windows edits in the primary checkout were left untouched.
 
 **Feasibility conclusion:** Tauri 2 provides an Android build path in principle, but this repository’s current Windows application has not been shown to build for Android and is not a suitable Android target unchanged. A minimal separate app is plausible; successful Android compilation, plugin selection, microphone permission behavior, Whisper packaging/performance, and end-to-end round trips remain unverified. Do not mark the Android build/device acceptance criteria complete on this evidence.
