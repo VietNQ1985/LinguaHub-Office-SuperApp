@@ -69,14 +69,100 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+async fn check_github_release_page(client: &reqwest::Client) -> anyhow::Result<AppUpdateInfo> {
+    let latest_url = format!("https://github.com/{GITHUB_REPO}/releases/latest");
+    let response = client
+        .get(&latest_url)
+        .header("Accept", "text/html")
+        .send()
+        .await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "GitHub Releases trả lỗi HTTP {}.",
+        response.status().as_u16()
+    );
+    let release_url = response.url().clone();
+    let segments = release_url
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+    let tag_index = segments
+        .windows(2)
+        .position(|pair| pair[0] == "tag")
+        .ok_or_else(|| anyhow::anyhow!("Không đọc được tag từ trang GitHub Releases."))?;
+    let tag = segments[tag_index + 1];
+    let version = tag.trim_start_matches(['v', 'V']);
+    let version_parts: Vec<_> = version.split('.').collect();
+    anyhow::ensure!(
+        version_parts.len() == 3
+            && version_parts
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())),
+        "Tag Release GitHub không phải phiên bản ổn định hợp lệ."
+    );
+
+    let assets_url = format!("https://github.com/{GITHUB_REPO}/releases/expanded_assets/{tag}");
+    let assets_response = client
+        .get(&assets_url)
+        .header("Accept", "text/html")
+        .send()
+        .await?;
+    anyhow::ensure!(
+        assets_response.status().is_success(),
+        "Không đọc được danh sách bộ cài của GitHub Release."
+    );
+    let assets_html = assets_response.text().await?;
+    let download_prefix = format!("/{GITHUB_REPO}/releases/download/{tag}/");
+    let asset_path = assets_html
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|value| value.split('\"').next())
+        .find(|path| {
+            path.starts_with(&download_prefix) && path.to_ascii_lowercase().ends_with("setup.exe")
+        })
+        .ok_or_else(|| anyhow::anyhow!("Release GitHub chưa có bộ cài Windows."))?;
+    let download_url = url::Url::parse("https://github.com")?
+        .join(asset_path)?
+        .to_string();
+    anyhow::ensure!(
+        allowed_download_url(&download_url),
+        "Đường dẫn tải bản cập nhật không hợp lệ."
+    );
+    let asset_name = url::Url::parse(&download_url)?
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .map(str::to_owned);
+
+    Ok(AppUpdateInfo {
+        current_version: CURRENT_VERSION.to_owned(),
+        latest_version: version.to_owned(),
+        update_available: is_newer_version(CURRENT_VERSION, version),
+        release_title: tag.to_owned(),
+        release_notes: String::new(),
+        published_at: String::new(),
+        html_url: release_url.to_string(),
+        download_url: Some(download_url),
+        asset_name,
+        asset_size: None,
+    })
+}
+
 pub async fn check_github_update() -> anyhow::Result<AppUpdateInfo> {
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
-    let response = http_client()
+    let client = http_client();
+    let response = match client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("Không kết nối được GitHub để kiểm tra cập nhật: {e}"))?;
+    {
+        Ok(response) => response,
+        Err(api_error) => {
+            return check_github_release_page(&client).await.map_err(|page_error| {
+                anyhow::anyhow!("Không kết nối được GitHub API ({api_error}); kiểm tra trang Releases cũng thất bại: {page_error}")
+            });
+        }
+    };
 
     if response.status().as_u16() == 404 {
         return Ok(AppUpdateInfo {
@@ -94,10 +180,10 @@ pub async fn check_github_update() -> anyhow::Result<AppUpdateInfo> {
     }
 
     if !response.status().is_success() {
-        anyhow::bail!(
-            "GitHub API trả lỗi {} khi kiểm tra cập nhật.",
-            response.status().as_u16()
-        );
+        let status = response.status().as_u16();
+        return check_github_release_page(&client).await.map_err(|page_error| {
+            anyhow::anyhow!("GitHub API trả lỗi {status}; kiểm tra trang Releases cũng thất bại: {page_error}")
+        });
     }
 
     let body: Value = response.json().await?;
