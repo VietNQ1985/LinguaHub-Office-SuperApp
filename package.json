@@ -1,8 +1,8 @@
 {
   "name": "linguahub-office-superapp",
-  "version": "0.4.22",
+  "version": "0.4.23",
   "private": true,
-  "description": "LinguaHub Office SuperApp 0.4.22 on Tauri v2 with ERP focus workspaces, quick chat, Windows PDF signing, and resilient GitHub release checks.",
+  "description": "LinguaHub Office SuperApp 0.4.23 on Tauri v2 with ERP focus workspaces, quick chat, Windows PDF signing, and resilient GitHub release checks.",
   "license": "MIT",
   "type": "module",
   "scripts": {

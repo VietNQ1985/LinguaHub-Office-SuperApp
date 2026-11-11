@@ -39,6 +39,7 @@ import type { ErpFileInspection } from './erpFileTools'
 import {
   ArrowLeft,
   ArrowDownToLine,
+  ArrowRight,
   ArrowUpToLine,
   LockKeyhole,
   Maximize2,
@@ -389,6 +390,11 @@ function App({ onLock }: { onLock: () => void }) {
       return webTabs.at(-1)?.id || ''
     }
   })
+  const [erpAddress, setErpAddress] = React.useState('')
+  const erpAddressInput = React.useRef<HTMLInputElement>(null)
+  React.useEffect(() => {
+    setErpAddress(webTabs.find(tab => tab.id === activeWeb)?.address || '')
+  }, [activeWeb, webTabs])
   const [erpOpen, setErpOpen] = React.useState(false)
   const [erpRightPanelView, setErpRightPanelView] = React.useState<'files' | 'ai'>('files')
   const [sampleFinderOpen, setSampleFinderOpen] = React.useState(false)
@@ -489,6 +495,41 @@ function App({ onLock }: { onLock: () => void }) {
     setErpOpen(true)
     setWorkspaceForm('tab')
     setPanelCollapsed(false)
+  }
+  const submitErpAddress = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const entered = erpAddress.trim()
+    if (!entered) return
+    if (/^[a-z][a-z\d+.-]*:\/\//i.test(entered) && !/^https:\/\//i.test(entered)) {
+      setStatus('ERP chỉ mở địa chỉ HTTPS.')
+      return
+    }
+    let target: URL
+    try {
+      target = new URL(/^https:\/\//i.test(entered) ? entered : `https://${entered}`)
+      if (target.protocol !== 'https:' || target.username || target.password || !target.hostname)
+        throw new Error('invalid URL')
+    } catch {
+      setStatus('Địa chỉ không hợp lệ. Anh nhập một URL HTTPS nhé.')
+      return
+    }
+    const existing = webTabs.find(tab => tab.id === activeWeb)
+    if (existing) {
+      const updated = { ...existing, address: target.href, transient: false }
+      if (await openWeb(updated)) {
+        setWebTabs(tabs => tabs.map(tab => tab.id === existing.id ? updated : tab))
+      }
+      return
+    }
+    if (webTabs.length >= 20) {
+      setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.')
+      return
+    }
+    const tab = { id: 'web-' + crypto.randomUUID(), address: target.href, name: target.hostname }
+    if (await openWeb(tab)) {
+      knownWebTabs.current.add(tab.id)
+      setWebTabs(tabs => [...tabs, tab])
+    }
   }
   const [unread, setUnread] = React.useState<UnreadCounts>({ whatsapp: 0, teams: 0, zalo: 0 })
   React.useEffect(() => {
@@ -1289,6 +1330,27 @@ function App({ onLock }: { onLock: () => void }) {
             >
               ＋ <span>Tab mới</span>
             </button>
+            <form className="erp-address-form" role="search" onSubmit={event => void submitErpAddress(event)}>
+              <input
+                ref={erpAddressInput}
+                type="text"
+                inputMode="url"
+                aria-label="Địa chỉ trang ERP"
+                title="Nhập địa chỉ HTTPS rồi nhấn Enter"
+                placeholder="Nhập địa chỉ trang ERP…"
+                value={erpAddress}
+                onChange={event => setErpAddress(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    setErpAddress(webTabs.find(tab => tab.id === activeWeb)?.address || '')
+                    event.currentTarget.blur()
+                  }
+                }}
+              />
+              <button type="submit" aria-label="Đi đến địa chỉ ERP" title="Đi đến địa chỉ ERP">
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
+            </form>
             {!webTabs.length && !sampleFinderOpen && (
               <span className="erp-subtabs-hint">Mở Arito hoặc thêm một địa chỉ web ERP.</span>
             )}

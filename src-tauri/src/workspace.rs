@@ -592,10 +592,12 @@ fn open_web_tab_with_options(
             .ok_or_else(|| anyhow::anyhow!("Chưa có cửa sổ chính"))?;
         let local_app = app.clone();
         let title_app = app.clone();
+        let navigation_app = app.clone();
         let title_id = id.to_owned();
+        let navigation_id = id.to_owned();
         #[cfg(windows)]
         let popup_pool: PopupPool = Arc::new(Mutex::new(VecDeque::new()));
-        let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
+        let builder = WebviewBuilder::new(&label, WebviewUrl::External(url.clone()))
             .additional_browser_args(BROWSER_ARGS)
             .initialization_script(concat!(include_str!(
                 "../page-scripts/erp-password-manager.js"
@@ -659,6 +661,15 @@ fn open_web_tab_with_options(
                 json!({"id":title_id,"name":title.chars().take(80).collect::<String>()}),
             );
         });
+        let builder = builder.on_page_load(move |_view, payload| {
+            if payload.event() == PageLoadEvent::Finished && payload.url().scheme() == "https" {
+                let _ = navigation_app.emit_to(
+                    "ui",
+                    "web-tab-navigated",
+                    json!({"id": navigation_id, "address": payload.url().as_str()}),
+                );
+            }
+        });
         let webview = window.add_child(
             builder,
             LogicalPosition::new(0.0, HEADER),
@@ -685,6 +696,10 @@ fn open_web_tab_with_options(
             }
         }
         state.lock().views.insert(label);
+    } else if let Some(view) = existing.as_ref() {
+        if view.url().map(|current| current != url).unwrap_or(true) {
+            view.navigate(url)?;
+        }
     }
     state.stop_meeting();
     {
