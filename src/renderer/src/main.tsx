@@ -5,6 +5,7 @@ import { SampleFilePanel } from './SampleFilePanel'
 import { ErpFloatingPanel } from './ErpFloatingPanel'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
+import { invoke } from '@tauri-apps/api/core'
 import './style.css'
 import './dashboard.css'
 import './bridge'
@@ -37,6 +38,9 @@ import type {
 import type { ErpFileInspection } from './erpFileTools'
 import {
   ArrowLeft,
+  ArrowDownToLine,
+  ArrowUpToLine,
+  LockKeyhole,
   Maximize2,
   Minimize2,
   Moon,
@@ -131,6 +135,8 @@ declare global {
       reloadWorkspace(): Promise<{ title: string }>
       setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean, pinned?: boolean): void
       setWorkspaceFocusMode(enabled: boolean): Promise<void>
+      setWorkspaceQuickChat(service: AppId | null): Promise<void>
+      setWorkspaceErpTabsPosition(bottom: boolean): Promise<void>
       getWorkspaceFocusPanelState(): Promise<{ collapsed: boolean; width: number; pinned: boolean; activeTab: { id: string; name: string; address: string } | null }>
       openWorkspace(service: WorkspaceService): Promise<{ title: string }>
       showDashboard(): Promise<boolean>
@@ -332,7 +338,7 @@ declare global {
   }
 }
 
-function App() {
+function App({ onLock }: { onLock: () => void }) {
   const [activeArea, setActiveArea] = React.useState<OfficeArea>('dashboard')
   const activeAreaRef = React.useRef<OfficeArea>(activeArea)
   activeAreaRef.current = activeArea
@@ -517,6 +523,47 @@ function App() {
   const [status, setStatus] = React.useState('Đang mở…')
   const isErpWorkspaceActive = activeArea === 'projects' && erpOpen && !tasksOpen
   const focusTogglePending = React.useRef(false)
+  const [quickChat, setQuickChat] = React.useState<AppId | undefined>()
+  const [erpTabsBottom, setErpTabsBottom] = React.useState(() => {
+    try { return localStorage.getItem('linguahub.erp.tabs-position.v1') === 'bottom' } catch { return false }
+  })
+  const [lastQuickChat, setLastQuickChat] = React.useState<AppId | undefined>()
+  const quickChatControls = React.useRef<HTMLDivElement>(null)
+  const quickChatPending = React.useRef(false)
+  React.useEffect(() => {
+    try { localStorage.setItem('linguahub.erp.tabs-position.v1', erpTabsBottom ? 'bottom' : 'top') } catch {}
+    void window.lingua.setWorkspaceErpTabsPosition(erpTabsBottom).catch(() => {})
+  }, [erpTabsBottom])
+  React.useEffect(() => {
+    const sync = (event: Event) => {
+      const service = (event as CustomEvent<AppId | null>).detail
+      setQuickChat(service ?? undefined)
+      if (service) setLastQuickChat(service)
+    }
+    window.addEventListener('linguahub:erp-quick-chat', sync)
+    return () => window.removeEventListener('linguahub:erp-quick-chat', sync)
+  }, [])
+  React.useEffect(() => {
+    if (!erpFocusMode) {
+      setQuickChat(undefined)
+      setLastQuickChat(undefined)
+      return
+    }
+    if (!quickChat) return
+    const dismiss = () => void window.lingua.setWorkspaceQuickChat(null).catch(console.error)
+    const outside = (event: PointerEvent) => {
+      if (!quickChatControls.current?.contains(event.target as Node)) dismiss()
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss()
+    }
+    document.addEventListener('pointerdown', outside, true)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', outside, true)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [erpFocusMode, quickChat])
   React.useEffect(() => {
     if (!erpFocusMode || isErpWorkspaceActive) return
     void window.lingua
@@ -1058,7 +1105,7 @@ function App() {
         onToggle={() => setSidebarCollapsed(value => !value)}
         onManageWorkspaces={openWorkspaceManagement}
       />
-      <div className="office-main">
+      <div className={erpTabsBottom ? 'office-main erp-tabs-bottom' : 'office-main'}>
         {workspaceForm && (
           <WorkspaceForm
             kind={workspaceForm}
@@ -1112,6 +1159,9 @@ function App() {
                 {erpFocusMode ? <Minimize2 size={18} aria-hidden="true" /> : <Maximize2 size={18} aria-hidden="true" />}
               </button>
             )}
+            <button type="button" className="erp-subtab-icon" title="Khóa LinguaHub" aria-label="Khóa LinguaHub" onClick={onLock}>
+              <LockKeyhole size={17} aria-hidden="true" />
+            </button>
             <OfficeNotifications
               counts={unread}
               onOpen={service => void open(service, 'messages')}
@@ -1251,6 +1301,43 @@ function App() {
               ⌕ Tra Sample ID
             </button>
             <div className="erp-subtabs-actions">
+              <button type="button" className="erp-subtab-icon" title={erpTabsBottom ? 'Đưa thanh tab ERP lên trên' : 'Đưa thanh tab ERP xuống dưới'} aria-label={erpTabsBottom ? 'Đưa thanh tab ERP lên trên' : 'Đưa thanh tab ERP xuống dưới'} onClick={() => setErpTabsBottom(value => !value)}>
+                {erpTabsBottom ? <ArrowUpToLine size={15} aria-hidden="true" /> : <ArrowDownToLine size={15} aria-hidden="true" />}
+              </button>
+              {erpFocusMode && <button type="button" className="erp-subtab-icon" title="Khóa LinguaHub" aria-label="Khóa LinguaHub" onClick={onLock}>
+                <LockKeyhole size={15} aria-hidden="true" />
+              </button>}
+              {erpFocusMode && apps && (
+                <div className="erp-quick-chat-controls" ref={quickChatControls}>
+                  <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread}
+                    onSelect={service => {
+                      if (quickChatPending.current || focusTogglePending.current) return
+                      quickChatPending.current = true
+                      void window.lingua.setWorkspaceQuickChat(quickChat === service ? null : service).catch(() => {
+                        setStatus('Chưa mở được chat nhanh.')
+                      }).finally(() => {
+                        quickChatPending.current = false
+                      })
+                    }}
+                  />
+                  {lastQuickChat && apps.includes(lastQuickChat) && <button type="button" className="erp-subtab-tool"
+                    title="Mở ứng dụng nhắn tin với công cụ dịch"
+                    onClick={() => {
+                    if (focusTogglePending.current) return
+                    focusTogglePending.current = true
+                    void window.lingua.setWorkspaceFocusMode(false).then(() => {
+                      setErpFocusMode(false)
+                      setPanelCollapsed(panelCollapsedBeforeFocus.current)
+                      return open(lastQuickChat, 'messages')
+                    }).catch(() => {
+                      setStatus('Chưa mở được ứng dụng nhắn tin.')
+                    }).finally(() => {
+                      focusTogglePending.current = false
+                    })
+                    }}
+                  >Mở đầy đủ</button>}
+                </div>
+              )}
               <button
                 type="button"
                 className="erp-subtab-icon erp-subtab-action"
@@ -1624,22 +1711,12 @@ function App() {
 
           {!tasksOpen && !(activeArea === 'documents' && sampleFinderOpen) && (
             <aside
-              className={panelCollapsed ? 'panel panel-collapsed' : 'panel'}
-              style={{ width: panelCollapsed ? 56 : panelWidth }}
+              className="panel"
+              style={{ width: panelWidth, display: panelCollapsed ? 'none' : undefined }}
               aria-label={
                 showErpFilesPanel ? 'Xử lý tệp ERP theo Sample ID' : 'Trợ lý AI theo ngữ cảnh'
               }
             >
-              {panelCollapsed && (
-                <button
-                  className="expand-panel"
-                  title="Mở trợ lý AI / ERP"
-                  aria-label="Mở trợ lý AI"
-                  onClick={() => setPanelCollapsed(false)}
-                >
-                  {erpFocusMode ? <PanelRightOpen size={18} aria-hidden="true" /> : '›'}
-                </button>
-              )}
               {erpFocusMode && !panelCollapsed && (
                 <button
                   className="focus-panel-toggle"
@@ -1687,6 +1764,69 @@ function App() {
   )
 }
 
+type AppLockState = { locked: boolean; configured: boolean }
+
+function LockedWorkspace() {
+  const [lock, setLock] = React.useState<AppLockState | null>(null)
+  const [started, setStarted] = React.useState(false)
+  const [pin, setPin] = React.useState('')
+  const [confirmation, setConfirmation] = React.useState('')
+  const [error, setError] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+
+  const showState = (state: AppLockState) => {
+    setLock(state)
+    if (!state.locked) setStarted(true)
+  }
+
+  React.useEffect(() => {
+    void invoke<AppLockState>('app_lock_state').then(showState).catch(error => setError(String(error)))
+  }, [])
+
+  const lockApp = () => {
+    setError('')
+    void invoke<AppLockState>('app_lock').then(showState).catch(error => setError(String(error)))
+  }
+
+  return <>
+    {started && <div style={{ display: lock?.locked ? 'none' : 'contents' }}>
+      <App onLock={lockApp} />
+      <DialogHost />
+      {!lock?.locked && error && <div className="app-lock-error" role="alert">{error}</div>}
+    </div>}
+    {(!lock || lock.locked) && <main className="app-lock-screen">
+      {lock ? <form className="app-lock-card" onSubmit={async event => {
+        event.preventDefault()
+        if (busy) return
+        if (!lock.configured && pin !== confirmation) {
+          setError('Hai mã PIN chưa trùng nhau.')
+          return
+        }
+        setError('')
+        setBusy(true)
+        try {
+          await invoke('app_unlock', { pin })
+          showState({ locked: false, configured: true })
+        } catch (error) {
+          setError(String(error))
+        } finally {
+          setPin('')
+          setConfirmation('')
+          setBusy(false)
+        }
+      }}>
+        <LockKeyhole size={28} aria-hidden="true" />
+        <h1>{lock.configured ? 'LinguaHub đang khóa' : 'Tạo PIN khóa LinguaHub'}</h1>
+        <p>{lock.configured ? 'Nhập PIN để tiếp tục.' : 'Dùng PIN từ 6 đến 12 chữ số. App sẽ yêu cầu PIN khi khởi động lại.'}</p>
+        <label>Mã PIN<input autoFocus type="password" inputMode="numeric" autoComplete={lock.configured ? 'current-password' : 'new-password'} pattern="[0-9]{6,12}" maxLength={12} value={pin} onChange={event => setPin(event.target.value)} required /></label>
+        {!lock.configured && <label>Xác nhận PIN<input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,12}" maxLength={12} value={confirmation} onChange={event => setConfirmation(event.target.value)} required /></label>}
+        {error && <p role="alert">{error}</p>}
+        <button className="primary-button" disabled={busy}>{lock.configured ? 'Mở khóa' : 'Lưu PIN và tiếp tục'}</button>
+      </form> : <p role={error ? 'alert' : 'status'}>{error || 'Đang kiểm tra khóa LinguaHub…'}</p>}
+    </main>}
+  </>
+}
+
 const isErpFloatingPanel = Boolean(
   (window as Window & { __LINGUA_HUB_ERP_PANEL__?: boolean }).__LINGUA_HUB_ERP_PANEL__,
 )
@@ -1694,9 +1834,6 @@ createRoot(document.getElementById('root')!).render(
   isErpFloatingPanel ? (
     <ErpFloatingPanel />
   ) : (
-    <>
-      <App />
-      <DialogHost />
-    </>
+    <LockedWorkspace />
   ),
 )

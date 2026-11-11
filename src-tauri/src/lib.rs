@@ -44,7 +44,7 @@ pub(crate) fn set_erp_focus_shortcut<R: tauri::Runtime>(app: &AppHandle<R>, enab
     let shortcut = app.global_shortcut();
     if enabled && !shortcut.is_registered("F11") {
         if let Err(error) = shortcut.on_shortcut("F11", |app, _, event| {
-            if event.state != ShortcutState::Pressed {
+            if event.state != ShortcutState::Pressed || app.state::<AppState>().lock().app_locked {
                 return;
             }
             // Registration is already scoped to the app's focused windows. Avoid
@@ -214,9 +214,7 @@ pub fn run() {
             window.on_window_event(move |event| match event {
                 WindowEvent::Resized(_)
                 | WindowEvent::Moved(_)
-                | WindowEvent::ScaleFactorChanged { .. } => {
-                    workspace::layout(&resize_handle)
-                }
+                | WindowEvent::ScaleFactorChanged { .. } => workspace::layout(&resize_handle),
                 WindowEvent::Focused(focused) => {
                     if *focused {
                         set_erp_focus_shortcut(&resize_handle, true);
@@ -255,9 +253,14 @@ pub fn run() {
             commands::tasks_save,
             commands::tasks_delete,
             commands::window_tray,
+            commands::app_lock_state,
+            commands::app_lock,
+            commands::app_unlock,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
             commands::workspace_focus_mode,
+            commands::workspace_quick_chat,
+            commands::workspace_erp_tabs_position,
             commands::workspace_focus_panel_state,
             commands::workspace_sidebar_layout,
             commands::workspace_service_tabs_layout,

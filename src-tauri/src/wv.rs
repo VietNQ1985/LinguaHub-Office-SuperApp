@@ -112,6 +112,55 @@ pub fn set_memory_low<R: Runtime>(view: &Webview<R>, low: bool) {
 #[cfg(not(windows))]
 pub fn set_memory_low<R: Runtime>(_view: &Webview<R>, _low: bool) {}
 
+#[cfg(windows)]
+pub fn install_quick_chat_dismissal<R: Runtime>(view: &Webview<R>) {
+    use webview2_com::FocusChangedEventHandler;
+    let app = view.app_handle().clone();
+    let _ = view.with_webview(move |platform| unsafe {
+        let handler = FocusChangedEventHandler::create(Box::new(move |_, _| {
+            let handle = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(160));
+                let app = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    crate::workspace::close_quick_chat_after_focus_settles(&app);
+                });
+            });
+            Ok(())
+        }));
+        let mut token = 0;
+        let _ = platform.controller().add_GotFocus(&handler, &mut token);
+    });
+}
+
+#[cfg(not(windows))]
+pub fn install_quick_chat_dismissal<R: Runtime>(_view: &Webview<R>) {}
+
+pub fn focus_quick_chat<R: Runtime>(view: &Webview<R>) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        };
+        let _ = view.with_webview(move |platform| unsafe {
+            let mut hwnd = HWND::default();
+            if platform.controller().ParentWindow(&mut hwnd).is_ok() {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOP),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        });
+    }
+    let _ = view.set_focus();
+}
+
 /// A device/feature a page asked for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Permission {

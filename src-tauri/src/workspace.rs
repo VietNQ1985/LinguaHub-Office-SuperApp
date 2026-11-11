@@ -35,11 +35,7 @@ pub fn recreate_erp_focus_panel<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
     if app.get_webview_window("erp-panel").is_some() || app.get_webview("erp-panel").is_some() {
         return Ok(());
     }
-    let panel = WebviewWindowBuilder::new(
-        app,
-        "erp-panel",
-        WebviewUrl::App("index.html".into()),
-    )
+    let panel = WebviewWindowBuilder::new(app, "erp-panel", WebviewUrl::App("index.html".into()))
         .title("LinguaHub ERP panel")
         .decorations(false)
         .always_on_top(true)
@@ -59,6 +55,9 @@ pub fn recreate_erp_focus_panel<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
     let focus_app = app.clone();
     panel.on_window_event(move |event| {
         if let WindowEvent::Focused(focused) = event {
+            if *focused {
+                close_quick_chat(&focus_app);
+            }
             let main_focused = focus_app
                 .get_window("main")
                 .and_then(|window| window.is_focused().ok())
@@ -598,9 +597,9 @@ fn open_web_tab_with_options(
         let popup_pool: PopupPool = Arc::new(Mutex::new(VecDeque::new()));
         let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
             .additional_browser_args(BROWSER_ARGS)
-            .initialization_script(concat!(
-                include_str!("../page-scripts/erp-password-manager.js"),
-            ))
+            .initialization_script(concat!(include_str!(
+                "../page-scripts/erp-password-manager.js"
+            ),))
             .on_navigation(move |url| {
                 if url.scheme() == "linguahub-local" && url.host_str() == Some("open") {
                     if let Some((_, path)) = url.query_pairs().find(|(key, _)| key == "path") {
@@ -665,6 +664,7 @@ fn open_web_tab_with_options(
             LogicalPosition::new(0.0, HEADER),
             LogicalSize::new(900.0, 650.0),
         )?;
+        wv::install_quick_chat_dismissal(&webview);
         #[cfg(windows)]
         {
             state
@@ -795,6 +795,20 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
     };
     let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
     let state = app.state::<AppState>();
+    if state.lock().app_locked {
+        let labels = state.lock().views.clone();
+        for label in labels {
+            if let Some(view) = app.get_webview(&label) {
+                let _ = view.hide();
+            }
+        }
+        for (label, window) in app.webview_windows() {
+            if label != "main" {
+                let _ = window.hide();
+            }
+        }
+        return;
+    }
     let (
         current,
         panel,
@@ -804,6 +818,9 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         sidebar_width,
         service_tabs_height,
         focus_mode,
+        panel_collapsed,
+        quick_chat,
+        erp_tabs_bottom,
     ) = {
         let inner = state.lock();
         let panel = if inner.panel_collapsed {
@@ -826,12 +843,62 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             inner.sidebar_width,
             inner.service_tabs_height,
             inner.focus_mode,
+            inner.panel_collapsed,
+            inner.quick_chat.clone().filter(|_| {
+                inner.focus_mode && inner.current.starts_with("web-") && !inner.tasks_open
+            }),
+            inner.erp_tabs_bottom,
         )
+    };
+    let bottom_reserved = if current.starts_with("web-") && erp_tabs_bottom {
+        ERP_TABS_HEIGHT
+    } else {
+        0.0
     };
     for label in labels {
         let Some(webview) = app.get_webview(&label) else {
             continue;
         };
+        if !dialog_open
+            && quick_chat
+                .as_ref()
+                .is_some_and(|service| label == view_label(service))
+        {
+            let right = width - panel;
+            let chat_width = (right - 24.0).clamp(320.0, 720.0);
+            let chat_bottom_reserved = if erp_tabs_bottom {
+                ERP_TABS_HEIGHT
+            } else {
+                0.0
+            };
+            let chat_height =
+                (height - ERP_TABS_HEIGHT - 24.0 - chat_bottom_reserved).clamp(100.0, 720.0);
+            let chat_x = (right - chat_width - 12.0).max(0.0);
+            let chat_y = if erp_tabs_bottom {
+                8.0
+            } else {
+                ERP_TABS_HEIGHT + 8.0
+            };
+            let bounds_changed = {
+                let mut inner = state.lock();
+                let bounds = (label.clone(), chat_x, chat_y, chat_width, chat_height);
+                if inner.quick_chat_layout == Some(bounds.clone()) {
+                    false
+                } else {
+                    inner.quick_chat_layout = Some(bounds);
+                    true
+                }
+            };
+            if bounds_changed {
+                let _ = webview.set_bounds(tauri::Rect {
+                    position: LogicalPosition::new(chat_x, chat_y).into(),
+                    size: LogicalSize::new(chat_width, chat_height).into(),
+                });
+                let _ = webview.show();
+            }
+            wv::set_memory_low(&webview, false);
+            continue;
+        }
         let service_tabs_height =
             if matches!(current.as_str(), "whatsapp" | "telegram" | "teams" | "zalo") {
                 service_tabs_height
@@ -840,7 +907,11 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             };
         let top = if focus_mode {
             if current.starts_with("web-") {
-                ERP_TABS_HEIGHT
+                if erp_tabs_bottom {
+                    0.0
+                } else {
+                    ERP_TABS_HEIGHT
+                }
             } else {
                 0.0
             }
@@ -848,7 +919,11 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             HEADER
                 + service_tabs_height
                 + if current.starts_with("web-") {
-                    ERP_TABS_HEIGHT
+                    if erp_tabs_bottom {
+                        0.0
+                    } else {
+                        ERP_TABS_HEIGHT
+                    }
                 } else {
                     0.0
                 }
@@ -856,11 +931,15 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         let left = if focus_mode { 0.0 } else { sidebar_width };
         // In F11 the separate panel overlays ERP; toggling it must not resize
         // the page or move its columns. Normal mode keeps the docked panel.
-        let right_reserved = if focus_mode && !state.lock().panel_pinned { 0.0 } else { panel + divider };
+        let right_reserved = if panel_collapsed || (focus_mode && !state.lock().panel_pinned) {
+            0.0
+        } else {
+            panel + divider
+        };
         let _ = webview.set_position(LogicalPosition::new(left, top));
         let _ = webview.set_size(LogicalSize::new(
             (width - left - right_reserved).max(300.0),
-            (height - top).max(100.0),
+            (height - top - bottom_reserved).max(100.0),
         ));
         let visible = label == view_label(&current) && !state.lock().tasks_open;
         if visible && !dialog_open {
@@ -887,12 +966,12 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             .and_then(|window| window.is_focused().ok())
             .unwrap_or(false);
         let panel_focused = panel_view.is_focused().unwrap_or(false);
-        if focus_mode && current.starts_with("web-") && (main_focused || panel_focused) {
-            let overlay_width = if state.lock().panel_collapsed {
-                56.0
-            } else {
-                panel.min((width - 320.0).max(280.0))
-            };
+        if focus_mode
+            && current.starts_with("web-")
+            && !panel_collapsed
+            && (main_focused || panel_focused)
+        {
+            let overlay_width = panel.min((width - 320.0).max(280.0));
             let main_window = app.get_window("main");
             let scale = main_window
                 .as_ref()
@@ -904,11 +983,15 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             let x = screen_origin.map_or(0.0, |point| point.x as f64 / scale)
                 + (width - overlay_width).max(0.0);
             let y = screen_origin.map_or(0.0, |point| point.y as f64 / scale)
-                + ERP_TABS_HEIGHT;
+                + if erp_tabs_bottom {
+                    0.0
+                } else {
+                    ERP_TABS_HEIGHT
+                };
             let _ = panel_view.set_position(LogicalPosition::new(x, y));
             let _ = panel_view.set_size(LogicalSize::new(
                 overlay_width,
-                (height - ERP_TABS_HEIGHT).max(100.0),
+                (height - bottom_reserved).max(100.0),
             ));
             let _ = panel_view.show();
         } else {
@@ -1020,7 +1103,10 @@ fn update_unread<R: Runtime>(app: &AppHandle<R>, service: &str, next: Value) {
             return;
         }
         inner.unread.insert(service.to_owned(), next.clone());
-        (previous, inner.notification_armed.contains(service))
+        (
+            previous,
+            !inner.app_locked && inner.notification_armed.contains(service),
+        )
     };
     emit_unread(app);
     if !armed {
@@ -1140,17 +1226,28 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
     }
     let state = app.state::<AppState>();
     state.stop_meeting();
-    let label = view_label(service);
     {
         let mut inner = state.lock();
         inner.workspace_request += 1;
         inner.current = service.to_owned();
         inner.tasks_open = false;
+        inner.quick_chat = None;
+        inner.quick_chat_changed_at = None;
+        inner.quick_chat_layout = None;
     }
+    ensure_service_view(app, service)?;
+    layout(app);
     if let Some(existing) = view(app, service) {
-        layout(app);
         let _ = existing.set_focus();
-        return Ok(json!({ "title": "" }));
+    }
+    Ok(json!({ "title": "" }))
+}
+
+fn ensure_service_view<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    let label = view_label(service);
+    if view(app, service).is_some() {
+        return Ok(());
     }
     let window = app
         .get_window("main")
@@ -1168,9 +1265,7 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
         WebviewUrl::External(urls::start_url(service).parse()?),
     )
     .additional_browser_args(BROWSER_ARGS)
-    .initialization_script(concat!(
-        include_str!("../page-scripts/agent.js"),
-    ))
+    .initialization_script(concat!(include_str!("../page-scripts/agent.js"),))
     .on_navigation(move |url| {
         let allowed = url.as_str() == "about:blank"
             || urls::is_workspace_url(&navigation_service, url.as_str());
@@ -1261,30 +1356,76 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow::Resu
             }
         }
     });
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let size = window.inner_size()?;
-    let (sidebar_width, service_tabs_height) = {
-        let inner = state.lock();
-        let service_tabs_height = if matches!(service, "whatsapp" | "telegram" | "teams" | "zalo") {
-            inner.service_tabs_height
-        } else {
-            0.0
-        };
-        (inner.sidebar_width, service_tabs_height)
-    };
-    let top = HEADER + service_tabs_height;
     let webview = window.add_child(
         builder,
-        LogicalPosition::new(sidebar_width, top),
-        LogicalSize::new(
-            (size.width as f64 / scale - sidebar_width - 400.0).max(300.0),
-            (size.height as f64 / scale - top).max(100.0),
-        ),
+        LogicalPosition::new(-2.0, -2.0),
+        LogicalSize::new(1.0, 1.0),
     )?;
-    let _ = wv::install_permissions(&webview, service_permissions(app, service_owned.clone()));
+    let _ = wv::install_permissions(&webview, service_permissions(app, service_owned));
     state.lock().views.insert(label);
+    Ok(())
+}
+
+pub fn set_quick_chat(app: &AppHandle, service: Option<String>) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    if let Some(service) = service {
+        anyhow::ensure!(
+            matches!(service.as_str(), "whatsapp" | "telegram" | "teams" | "zalo"),
+            "Invalid chat service"
+        );
+        {
+            let inner = state.lock();
+            anyhow::ensure!(
+                inner.focus_mode && inner.current.starts_with("web-"),
+                "ERP focus mode is inactive"
+            );
+        }
+        ensure_service_view(app, &service)?;
+        let chat = view(app, &service).ok_or_else(|| anyhow::anyhow!("Missing chat view"))?;
+        {
+            let mut inner = state.lock();
+            anyhow::ensure!(
+                inner.focus_mode && inner.current.starts_with("web-"),
+                "ERP focus mode is inactive"
+            );
+            inner.quick_chat = Some(service.clone());
+            inner.quick_chat_changed_at = Some(std::time::Instant::now());
+        }
+        layout(app);
+        wv::focus_quick_chat(&chat);
+        let _ = app.emit_to("ui", "erp-quick-chat", Some(service));
+    } else {
+        close_quick_chat(app);
+    }
+    Ok(())
+}
+
+pub(crate) fn close_quick_chat<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.lock();
+        if inner.quick_chat.take().is_none() {
+            return;
+        }
+        inner.quick_chat_changed_at = None;
+        inner.quick_chat_layout = None;
+    }
     layout(app);
-    Ok(json!({ "title": "" }))
+    let _ = app.emit_to("ui", "erp-quick-chat", None::<String>);
+}
+
+pub(crate) fn close_quick_chat_after_focus_settles<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<AppState>();
+    let should_close = {
+        let inner = state.lock();
+        inner.quick_chat.is_some()
+            && inner
+                .quick_chat_changed_at
+                .is_some_and(|at| at.elapsed() >= Duration::from_millis(200))
+    };
+    if should_close {
+        close_quick_chat(app);
+    }
 }
 
 pub fn dashboard<R: Runtime>(app: &AppHandle<R>) {
@@ -1307,7 +1448,9 @@ pub fn activate<R: Runtime>(app: &AppHandle<R>, service: &str) {
         let _ = window.show();
         let _ = window.set_focus();
     }
-    let _ = app.emit_to("ui", "app-shortcut", service);
+    if !app.state::<AppState>().lock().app_locked {
+        let _ = app.emit_to("ui", "app-shortcut", service);
+    }
 }
 
 const POLL: &str = r#"(()=>{

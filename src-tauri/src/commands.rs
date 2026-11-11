@@ -26,6 +26,9 @@ fn fail(error: impl std::fmt::Display) -> String {
 
 fn trusted(webview: &Webview) -> Res<()> {
     if matches!(webview.label(), "ui" | "erp-panel") {
+        if webview.state::<AppState>().lock().app_locked {
+            return Err("LinguaHub đang khóa.".into());
+        }
         Ok(())
     } else {
         Err("Untrusted sender".into())
@@ -37,6 +40,107 @@ fn sleep(ms: u64) -> tokio::time::Sleep {
 }
 
 // ---------- window, tabs, layout ----------
+
+#[tauri::command]
+pub fn app_lock_state(webview: Webview, state: State<AppState>) -> Res<Value> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    Ok(json!({
+        "locked": state.lock().app_locked,
+        "configured": state.store.app_lock_verifier().is_some(),
+    }))
+}
+
+#[tauri::command]
+pub fn app_lock(webview: Webview, app: AppHandle) -> Res<Value> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.lock();
+        inner.app_locked = true;
+        inner.quick_chat = None;
+        inner.quick_chat_changed_at = None;
+        inner.quick_chat_layout = None;
+        inner.chat_read_authorized = false;
+        inner.background_cloud_consent = false;
+    }
+    state.stop_meeting();
+    workspace::layout(&app);
+    let _ = app.emit_to("ui", "erp-quick-chat", None::<String>);
+    let _ = webview.set_focus();
+    app_lock_state(webview, state)
+}
+
+#[tauri::command]
+pub async fn app_unlock(webview: Webview, app: AppHandle, pin: String) -> Res<()> {
+    use ring::{
+        pbkdf2,
+        rand::{SecureRandom, SystemRandom},
+    };
+    use std::{num::NonZeroU32, time::Instant};
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let pin = zeroize::Zeroizing::new(pin);
+    if !(6..=12).contains(&pin.len()) || !pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("PIN phải có từ 6 đến 12 chữ số.".into());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.lock();
+        if !inner.app_locked {
+            return Err("LinguaHub chưa khóa.".into());
+        }
+        if inner
+            .unlock_after
+            .is_some_and(|until| until > Instant::now())
+        {
+            return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+        }
+        inner.unlock_after = Some(Instant::now() + Duration::from_secs(3));
+    }
+    let rounds = NonZeroU32::new(600_000).unwrap();
+    if let Some(saved) = state.store.app_lock_verifier() {
+        let (salt, digest) = saved.split_once(':').ok_or("Không đọc được PIN đã lưu.")?;
+        let salt = hex::decode(salt).map_err(fail)?;
+        let digest = hex::decode(digest).map_err(fail)?;
+        pbkdf2::verify(
+            pbkdf2::PBKDF2_HMAC_SHA256,
+            rounds,
+            &salt,
+            pin.as_bytes(),
+            &digest,
+        )
+        .map_err(|_| "PIN không đúng.".to_owned())?;
+    } else {
+        let mut salt = [0; 16];
+        SystemRandom::new()
+            .fill(&mut salt)
+            .map_err(|_| "Không tạo được PIN.")?;
+        let mut digest = [0; 32];
+        pbkdf2::derive(
+            pbkdf2::PBKDF2_HMAC_SHA256,
+            rounds,
+            &salt,
+            pin.as_bytes(),
+            &mut digest,
+        );
+        state
+            .store
+            .set_app_lock_verifier(&format!("{}:{}", hex::encode(salt), hex::encode(digest)))
+            .map_err(fail)?;
+    }
+    {
+        let mut inner = state.lock();
+        inner.app_locked = false;
+        inner.unlock_after = None;
+    }
+    workspace::layout(&app);
+    Ok(())
+}
 
 #[tauri::command]
 pub fn window_tray(webview: Webview, app: AppHandle) -> Res<bool> {
@@ -81,7 +185,9 @@ pub fn workspace_panel_layout(
     {
         let mut inner = state.lock();
         inner.panel_width = panel;
-        if let Some(pinned) = pinned { inner.panel_pinned = pinned; }
+        if let Some(pinned) = pinned {
+            inner.panel_pinned = pinned;
+        }
         inner.panel_collapsed = collapsed;
     }
     workspace::layout(&app);
@@ -128,6 +234,11 @@ pub async fn workspace_focus_mode(
             inner.focus_restore_maximized = restore;
         }
         inner.focus_mode = enabled;
+        if !enabled {
+            inner.quick_chat = None;
+            inner.quick_chat_changed_at = None;
+            inner.quick_chat_layout = None;
+        }
         restore
     };
     if let Some(window) = window {
@@ -221,6 +332,29 @@ pub fn workspace_unread(webview: Webview, state: State<AppState>) -> Res<Value> 
 }
 
 #[tauri::command]
+pub async fn workspace_quick_chat(
+    webview: Webview,
+    app: AppHandle,
+    service: Option<String>,
+) -> Res<()> {
+    trusted(&webview)?;
+    workspace::set_quick_chat(&app, service).map_err(fail)
+}
+
+#[tauri::command]
+pub fn workspace_erp_tabs_position(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    bottom: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.lock().erp_tabs_bottom = bottom;
+    workspace::layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn workspace_open(webview: Webview, app: AppHandle, service: String) -> Res<Value> {
     trusted(&webview)?;
     app.state::<AppState>().store.set_last_app(&service);
@@ -238,7 +372,11 @@ pub async fn web_tab_open(
 ) -> Res<()> {
     trusted(&webview)?;
     workspace::open_web_tab(&app, &id, &address, close).map_err(fail)?;
-    let _ = app.emit_to("erp-panel", "erp-panel-state", focus_panel_snapshot(&app, &state));
+    let _ = app.emit_to(
+        "erp-panel",
+        "erp-panel-state",
+        focus_panel_snapshot(&app, &state),
+    );
     Ok(())
 }
 
