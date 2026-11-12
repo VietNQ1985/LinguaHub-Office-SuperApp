@@ -860,7 +860,9 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             inner.focus_mode,
             inner.panel_collapsed,
             inner.quick_chat.clone().filter(|_| {
-                inner.focus_mode && inner.current.starts_with("web-") && !inner.tasks_open
+                (inner.current.starts_with("web-")
+                    || crate::urls::SERVICES.contains(&inner.current.as_str()))
+                    && !inner.tasks_open
             }),
             inner.erp_tabs_bottom,
         )
@@ -881,19 +883,24 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
         {
             let right = width - panel;
             let chat_width = (right - 24.0).clamp(320.0, 720.0);
-            let chat_bottom_reserved = if erp_tabs_bottom {
+            let is_erp_page = current.starts_with("web-");
+            let chat_bottom_reserved = if is_erp_page && erp_tabs_bottom {
                 ERP_TABS_HEIGHT
             } else {
                 0.0
             };
-            let chat_height =
-                (height - ERP_TABS_HEIGHT - 24.0 - chat_bottom_reserved).clamp(100.0, 720.0);
-            let chat_x = (right - chat_width - 12.0).max(0.0);
-            let chat_y = if erp_tabs_bottom {
-                8.0
+            let chat_top = if is_erp_page {
+                if erp_tabs_bottom {
+                    0.0
+                } else {
+                    ERP_TABS_HEIGHT
+                }
             } else {
-                ERP_TABS_HEIGHT + 8.0
+                HEADER + service_tabs_height
             };
+            let chat_height = (height - chat_top - 16.0 - chat_bottom_reserved).clamp(100.0, 720.0);
+            let chat_x = (right - chat_width - 12.0).max(0.0);
+            let chat_y = chat_top + 8.0;
             let bounds_changed = {
                 let mut inner = state.lock();
                 let bounds = (label.clone(), chat_x, chat_y, chat_width, chat_height);
@@ -914,12 +921,11 @@ pub fn layout<R: Runtime>(app: &AppHandle<R>) {
             wv::set_memory_low(&webview, false);
             continue;
         }
-        let service_tabs_height =
-            if matches!(current.as_str(), "whatsapp" | "telegram" | "teams" | "zalo") {
-                service_tabs_height
-            } else {
-                0.0
-            };
+        let service_tabs_height = if crate::urls::SERVICES.contains(&current.as_str()) {
+            service_tabs_height
+        } else {
+            0.0
+        };
         let top = if focus_mode {
             if current.starts_with("web-") {
                 if erp_tabs_bottom {
@@ -1391,7 +1397,9 @@ pub fn set_quick_chat(app: &AppHandle, service: Option<String>) -> anyhow::Resul
         {
             let inner = state.lock();
             anyhow::ensure!(
-                inner.focus_mode && inner.current.starts_with("web-"),
+                (inner.current.starts_with("web-")
+                    || crate::urls::SERVICES.contains(&inner.current.as_str()))
+                    && !inner.tasks_open,
                 "ERP focus mode is inactive"
             );
         }
@@ -1400,8 +1408,14 @@ pub fn set_quick_chat(app: &AppHandle, service: Option<String>) -> anyhow::Resul
         {
             let mut inner = state.lock();
             anyhow::ensure!(
-                inner.focus_mode && inner.current.starts_with("web-"),
+                (inner.current.starts_with("web-")
+                    || crate::urls::SERVICES.contains(&inner.current.as_str()))
+                    && !inner.tasks_open,
                 "ERP focus mode is inactive"
+            );
+            anyhow::ensure!(
+                inner.current.starts_with("web-") || inner.current != service,
+                "Ứng dụng này đang mở toàn màn hình rồi."
             );
             inner.quick_chat = Some(service.clone());
             inner.quick_chat_changed_at = Some(std::time::Instant::now());

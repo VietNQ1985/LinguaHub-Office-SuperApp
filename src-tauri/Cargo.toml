@@ -1,6 +1,6 @@
 [package]
 name = "linguahub-office-superapp"
-version = "0.4.23"
+version = "0.4.24"
 description = "LinguaHub on Tauri: messaging workspace with on-device chat translation"
 edition = "2021"
 rust-version = "1.88"
@@ -61,9 +61,11 @@ windows = { version = "0.62", features = [
   "Win32_Security_Cryptography",
   "Win32_System_Memory",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
 ] }
 windows-core = "0.62"
 oxidize-pdf = { version = "5.5.7", default-features = false, features = ["compression", "signatures"] }
+lopdf = { version = "0.38", default-features = false }
 
 [profile.release]
 codegen-units = 1

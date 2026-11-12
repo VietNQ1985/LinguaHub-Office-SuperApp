@@ -234,11 +234,6 @@ pub async fn workspace_focus_mode(
             inner.focus_restore_maximized = restore;
         }
         inner.focus_mode = enabled;
-        if !enabled {
-            inner.quick_chat = None;
-            inner.quick_chat_changed_at = None;
-            inner.quick_chat_layout = None;
-        }
         restore
     };
     if let Some(window) = window {
@@ -758,6 +753,23 @@ pub async fn pdf_export_convert(
     let roots = state.store.sample_search_roots();
     tokio::task::spawn_blocking(move || {
         crate::pdf_export::convert(&path, &file_name, &settings, &roots)
+    })
+    .await
+    .map_err(fail)?
+    .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn pdf_export_merge(
+    webview: Webview,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = ensure_pdf_export_signing_settings(&state).await?;
+    tokio::task::spawn_blocking(move || {
+        crate::pdf_export::merge_exported_pdfs(&paths, &file_name, &settings)
     })
     .await
     .map_err(fail)?

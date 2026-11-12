@@ -101,6 +101,7 @@ declare global {
       ): Promise<import('./pdfExport').PdfExportSettings>
       listPdfExportSource(): Promise<import('./erpFileTools').ErpSampleFile[]>
       convertToPdf(path: string, fileName: string): Promise<import('./pdfExport').PdfExportResult>
+      mergePdfOutputs(paths: string[], fileName: string): Promise<import('./pdfExport').PdfExportResult>
       scanErpPageAttachments(tabId: string): Promise<import('./pdfExport').ErpPageSnapshot>
       launchErpBookmarklet(tool: 'm1a' | 'm7k'): Promise<{message: string}>
       convertErpAttachmentToPdf(
@@ -554,6 +555,7 @@ function App({ onLock }: { onLock: () => void }) {
   const [taskSource, setTaskSource] = React.useState<TaskSourceSnapshot | null>(null)
   const [taskModel, setTaskModel] = React.useState('')
   const [activeService, setActiveService] = React.useState<UiService>('whatsapp')
+  const [apps, setApps] = React.useState<AppId[] | null>(null)
   const operation = React.useRef(0)
   const [fallbackService, setFallbackService] = React.useState<WorkspaceService | null>(null)
   const [panelWidth, setPanelWidth] = React.useState(360)
@@ -563,6 +565,7 @@ function App({ onLock }: { onLock: () => void }) {
   const openErpRef = React.useRef<(() => Promise<boolean>) | null>(null)
   const [status, setStatus] = React.useState('Đang mở…')
   const isErpWorkspaceActive = activeArea === 'projects' && erpOpen && !tasksOpen
+  const isQuickChatWorkspaceActive = !tasksOpen && (isErpWorkspaceActive || ['messages', 'email', 'meetings'].includes(activeArea))
   const focusTogglePending = React.useRef(false)
   const [quickChat, setQuickChat] = React.useState<AppId | undefined>()
   const [erpTabsBottom, setErpTabsBottom] = React.useState(() => {
@@ -585,7 +588,8 @@ function App({ onLock }: { onLock: () => void }) {
     return () => window.removeEventListener('linguahub:erp-quick-chat', sync)
   }, [])
   React.useEffect(() => {
-    if (!erpFocusMode) {
+    if (!isQuickChatWorkspaceActive) {
+      if (quickChat) void window.lingua.setWorkspaceQuickChat(null).catch(() => {})
       setQuickChat(undefined)
       setLastQuickChat(undefined)
       return
@@ -604,7 +608,7 @@ function App({ onLock }: { onLock: () => void }) {
       document.removeEventListener('pointerdown', outside, true)
       document.removeEventListener('keydown', escape)
     }
-  }, [erpFocusMode, quickChat])
+  }, [isQuickChatWorkspaceActive, quickChat])
   React.useEffect(() => {
     if (!erpFocusMode || isErpWorkspaceActive) return
     void window.lingua
@@ -715,6 +719,20 @@ function App({ onLock }: { onLock: () => void }) {
     window.lingua.setWorkspacePanelLayout(panelWidth, panelCollapsed, false)
   }, [panelWidth, panelCollapsed])
 
+  const toggleQuickChat = React.useCallback((service: AppId) => {
+    if (quickChatPending.current || focusTogglePending.current) return
+    if (!isErpWorkspaceActive && activeService === service) {
+      setStatus('Ứng dụng chat này đang mở toàn màn hình rồi.')
+      return
+    }
+    quickChatPending.current = true
+    void window.lingua.setWorkspaceQuickChat(quickChat === service ? null : service).catch(() => {
+      setStatus('Chưa mở được chat nhanh.')
+    }).finally(() => {
+      quickChatPending.current = false
+    })
+  }, [activeService, isErpWorkspaceActive, quickChat])
+
   const open = React.useCallback(async (service: WorkspaceService, targetArea?: OfficeArea) => {
     const current = ++operation.current
     const nextArea = targetArea || (service === 'outlook' ? 'email' : 'messages')
@@ -744,7 +762,7 @@ function App({ onLock }: { onLock: () => void }) {
     try {
       await window.lingua
         .setWorkspaceServiceTabsLayout(
-          nextArea === 'messages' && ['whatsapp', 'telegram', 'teams', 'zalo'].includes(service),
+          ['messages', 'email', 'meetings'].includes(nextArea) && Boolean(apps?.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app))),
         )
         .catch(() => {})
       await window.lingua.openWorkspace(service)
@@ -756,9 +774,8 @@ function App({ onLock }: { onLock: () => void }) {
       setFallbackService(service)
       setStatus('Không mở được trang trong ứng dụng.')
     }
-  }, [])
+  }, [apps])
 
-  const [apps, setApps] = React.useState<AppId[] | null>(null)
   const [needsSetup, setNeedsSetup] = React.useState(false)
   const openApp = React.useCallback(
     (app: AppId) => open(app, activeArea === 'meetings' ? 'meetings' : undefined),
@@ -898,7 +915,7 @@ function App({ onLock }: { onLock: () => void }) {
     return () => {
       alive = false
     }
-  }, [open])
+  }, [])
   const activeRef = React.useRef(activeService)
   const needsSetupRef = React.useRef(needsSetup)
   needsSetupRef.current = needsSetup
@@ -1284,12 +1301,26 @@ function App({ onLock }: { onLock: () => void }) {
           !needsSetup &&
           apps &&
           apps.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app)) && (
-            <OfficeServiceSwitcher
-              enabled={apps}
-              active={activeService}
-              unread={unread}
-              onSelect={service => void open(service, 'messages')}
-            />
+            <div className="office-messages-switcher-row" ref={quickChatControls}>
+              <OfficeServiceSwitcher
+                enabled={apps}
+                active={activeService}
+                unread={unread}
+                onSelect={service => void open(service, 'messages')}
+              />
+              <div className="office-quick-chat-group">
+                <span>Chat nhanh</span>
+                <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread} onSelect={toggleQuickChat} />
+              </div>
+            </div>
+          )}
+
+        {['email', 'meetings'].includes(activeArea) && !tasksOpen && !needsSetup && apps &&
+          apps.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app)) && (
+            <div className="office-quick-chat-bar" ref={quickChatControls}>
+              <span>Chat nhanh</span>
+              <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread} onSelect={toggleQuickChat} />
+            </div>
           )}
 
         {activeArea === 'projects' && erpOpen && !tasksOpen && (
@@ -1369,18 +1400,10 @@ function App({ onLock }: { onLock: () => void }) {
               {erpFocusMode && <button type="button" className="erp-subtab-icon" title="Khóa LinguaHub" aria-label="Khóa LinguaHub" onClick={onLock}>
                 <LockKeyhole size={15} aria-hidden="true" />
               </button>}
-              {erpFocusMode && apps && (
+              {apps && (
                 <div className="erp-quick-chat-controls" ref={quickChatControls}>
                   <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread}
-                    onSelect={service => {
-                      if (quickChatPending.current || focusTogglePending.current) return
-                      quickChatPending.current = true
-                      void window.lingua.setWorkspaceQuickChat(quickChat === service ? null : service).catch(() => {
-                        setStatus('Chưa mở được chat nhanh.')
-                      }).finally(() => {
-                        quickChatPending.current = false
-                      })
-                    }}
+                    onSelect={toggleQuickChat}
                   />
                   {lastQuickChat && apps.includes(lastQuickChat) && <button type="button" className="erp-subtab-tool"
                     title="Mở ứng dụng nhắn tin với công cụ dịch"

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { UnreadCounts } from '../../shared/workspace-unread'
+import type { PdfExportResult } from './pdfExport'
 
 // window.lingua for the Tauri build: the same API the Electron preload exposed, implemented with
 // Tauri commands (src-tauri/src/commands.rs) and events. Components keep calling window.lingua.*.
@@ -68,6 +69,7 @@ window.lingua = {
   createPdfSigningCertificate: () => call('pdf_export_create_signing_certificate'),
   listPdfExportSource: () => call('pdf_export_list_source'),
   convertToPdf: (path: string, fileName: string) => call('pdf_export_convert', {path, fileName}),
+  mergePdfOutputs: (paths: string[], fileName: string) => call<PdfExportResult>('pdf_export_merge', {paths, fileName}),
   scanErpPageAttachments: (tabId: string) => call('pdf_export_scan_erp_page', { tabId }),
   convertErpAttachmentToPdf: (
     tabId: string,

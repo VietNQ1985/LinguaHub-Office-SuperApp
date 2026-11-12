@@ -90,10 +90,19 @@ export function ErpFloatingPanel() {
       <button type="button" className="text-button" onClick={() => setView('settings')}>Cài đặt</button>
       <section className="erp-floating-panel-content">
         {view === 'files' ? (
-          <SampleFilePanel onOpenSettings={() => setView('settings')} activeTab={state.activeTab} onSwitchToAi={() => setView('ai')} />
+          <SampleFilePanel
+            onOpenSettings={() => setView('settings')}
+            activeTab={state.activeTab}
+            onSwitchToAi={() => setView('ai')}
+          />
         ) : (
           <React.Suspense fallback={<div role="status" className="assistant-loading">Đang mở trợ lý AI…</div>}>
-            <AiPanel key={view} initialSettings={view === 'settings'} workspaceActive onBackToErpFiles={() => setView('files')} />
+            <AiPanel
+              key={view}
+              initialSettings={view === 'settings'}
+              workspaceActive
+              onBackToErpFiles={() => setView('files')}
+            />
           </React.Suspense>
         )}
       </section>

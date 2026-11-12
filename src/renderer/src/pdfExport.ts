@@ -7,6 +7,7 @@ export type PdfExportSettings = {
   autoConvert: boolean
   overwrite: boolean
   autoSign: boolean
+  mergeOutputs: boolean
   certificateThumbprint: string | null
   signatureAppearance: PdfSignatureAppearance
   signaturePosition?: PdfSignaturePosition | null
@@ -124,6 +125,7 @@ export function defaultPdfSettings(): PdfExportSettings {
     autoConvert: false,
     overwrite: false,
     autoSign: false,
+    mergeOutputs: true,
     certificateThumbprint: null,
     signatureAppearance: 'compactRight',
   }

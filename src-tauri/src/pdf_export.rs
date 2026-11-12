@@ -8,6 +8,7 @@
 
 use crate::sample_files::{self, SampleFile};
 use base64::Engine;
+use lopdf::{Document as LopdfDocument, Object as LopdfObject};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::ops::Range;
@@ -52,10 +53,16 @@ pub struct PdfExportSettings {
     pub auto_convert: bool,
     pub overwrite: bool,
     pub auto_sign: bool,
+    #[serde(default = "default_merge_outputs")]
+    pub merge_outputs: bool,
     pub certificate_thumbprint: Option<String>,
     #[serde(default)]
     pub signature_appearance: PdfSignatureAppearance,
     pub signature_position: Option<PdfSignaturePosition>,
+}
+
+fn default_merge_outputs() -> bool {
+    true
 }
 
 impl Default for PdfExportSettings {
@@ -67,6 +74,7 @@ impl Default for PdfExportSettings {
             auto_convert: false,
             overwrite: false,
             auto_sign: false,
+            merge_outputs: true,
             certificate_thumbprint: None,
             signature_appearance: PdfSignatureAppearance::default(),
             signature_position: None,
@@ -1615,6 +1623,7 @@ pub fn normalize_settings(input: PdfExportSettings) -> anyhow::Result<PdfExportS
         auto_convert: input.auto_convert,
         overwrite: input.overwrite,
         auto_sign: input.auto_sign,
+        merge_outputs: input.merge_outputs,
         certificate_thumbprint,
         signature_appearance: input.signature_appearance,
         signature_position: input.signature_position,
@@ -1993,6 +2002,317 @@ pub fn convert_bytes(
     let result = convert_resolved_file(&temp_file, desired_pdf_name, settings);
     let _ = fs::remove_file(&temp_file);
     result
+}
+
+/// Join the successfully exported PDFs in their supplied order. The aggregate is
+/// signed after merging so its signature remains valid; individual PDFs remain intact.
+pub fn merge_exported_pdfs(
+    paths: &[String],
+    file_name: &str,
+    settings: &PdfExportSettings,
+) -> anyhow::Result<PdfExportResult> {
+    anyhow::ensure!(
+        paths.len() >= 2 && paths.len() <= MAX_SOURCE_FILES,
+        "Cần chọn ít nhất hai PDF để nối."
+    );
+    let output_folder = settings
+        .output_folder
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Chưa chọn thư mục lưu PDF."))?;
+    let output_dir = sample_files::validate_root(output_folder)?;
+    let mut inputs = Vec::with_capacity(paths.len());
+    for path in paths {
+        // `canonicalize()` returns Windows `\\?\` paths, while validate_root
+        // deliberately strips that prefix for settings/display paths. Compare
+        // normalized canonical paths so equivalent paths match on Windows.
+        let canonical = PathBuf::from(path).canonicalize()?;
+        let input = PathBuf::from(sample_files::normalize_windows_path(
+            canonical.to_string_lossy().as_ref(),
+        )?);
+        anyhow::ensure!(
+            input.starts_with(&output_dir),
+            "Chỉ nối các PDF vừa xuất trong thư mục đích."
+        );
+        anyhow::ensure!(
+            input.is_file()
+                && input
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("pdf")),
+            "Tệp nối không phải PDF hợp lệ."
+        );
+        inputs.push(input);
+    }
+    let target = unique_target(
+        &output_dir,
+        &sanitize_file_name(file_name),
+        settings.overwrite,
+    );
+    let temp = output_dir.join(format!(".linguahub-merge-{}.pdf", uuid::Uuid::new_v4()));
+    // Import page object graphs without decoding/re-encoding content streams.
+    // This keeps subset fonts and custom encodings byte-for-byte, while the
+    // first document remains the owner of catalog-level forms and metadata.
+    let merged = merge_pdf_pages_lossless(&inputs, &temp);
+    if let Err(error) = merged {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+    let result = (|| -> anyhow::Result<()> {
+        let bytes = fs::read(&temp)?;
+        anyhow::ensure!(
+            bytes.starts_with(b"%PDF-") && bytes.len() > 8,
+            "Tệp PDF tổng hợp không hợp lệ."
+        );
+        let bytes = if settings.auto_sign {
+            sign_pdf_bytes_with_windows_certificate(
+                &bytes,
+                settings
+                    .certificate_thumbprint
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Chưa chọn chứng thư ký số Windows."))?,
+                settings.signature_appearance,
+                settings.signature_position,
+            )?
+        } else {
+            bytes
+        };
+        atomic_replace_file(&target, &bytes)?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(&temp);
+    result?;
+    Ok(PdfExportResult {
+        source_path: paths.join("; "),
+        output_path: target.to_string_lossy().into_owned(),
+        method: "PDF đã nối".to_owned(),
+    })
+}
+
+fn remap_pdf_object(
+    object: &mut LopdfObject,
+    ids: &std::collections::BTreeMap<lopdf::ObjectId, lopdf::ObjectId>,
+) {
+    match object {
+        LopdfObject::Reference(id) => {
+            if let Some(mapped) = ids.get(id) {
+                *id = *mapped;
+            }
+        }
+        LopdfObject::Array(items) => items
+            .iter_mut()
+            .for_each(|item| remap_pdf_object(item, ids)),
+        LopdfObject::Dictionary(dict) => {
+            for (_, value) in dict.iter_mut() {
+                remap_pdf_object(value, ids);
+            }
+        }
+        LopdfObject::Stream(stream) => {
+            for (_, value) in stream.dict.iter_mut() {
+                remap_pdf_object(value, ids);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_page_tree_ids(
+    document: &LopdfDocument,
+    id: lopdf::ObjectId,
+    collected: &mut std::collections::BTreeSet<lopdf::ObjectId>,
+) -> anyhow::Result<()> {
+    if !collected.insert(id) {
+        return Ok(());
+    }
+    let dictionary = document.get_object(id)?.as_dict()?;
+    if let Ok(LopdfObject::Array(kids)) = dictionary.get(b"Kids") {
+        for kid in kids {
+            if let Ok(child) = kid.as_reference() {
+                collect_page_tree_ids(document, child, collected)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_reachable_pdf_objects(
+    document: &LopdfDocument,
+    object: &LopdfObject,
+    ignored: &std::collections::BTreeSet<lopdf::ObjectId>,
+    reachable: &mut std::collections::BTreeSet<lopdf::ObjectId>,
+) {
+    match object {
+        LopdfObject::Reference(id) => {
+            if ignored.contains(id) || !reachable.insert(*id) {
+                return;
+            }
+            if let Ok(referenced) = document.get_object(*id) {
+                collect_reachable_pdf_objects(document, referenced, ignored, reachable);
+            }
+        }
+        LopdfObject::Array(items) => {
+            for item in items {
+                collect_reachable_pdf_objects(document, item, ignored, reachable);
+            }
+        }
+        LopdfObject::Dictionary(dictionary) => {
+            let is_page = dictionary
+                .get(b"Type")
+                .and_then(LopdfObject::as_name)
+                .is_ok_and(|name| name == b"Page");
+            for (key, value) in dictionary.iter() {
+                if is_page && key.as_slice() == b"Parent" {
+                    continue;
+                }
+                collect_reachable_pdf_objects(document, value, ignored, reachable);
+            }
+        }
+        LopdfObject::Stream(stream) => {
+            collect_reachable_pdf_objects(
+                document,
+                &LopdfObject::Dictionary(stream.dict.clone()),
+                ignored,
+                reachable,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn copy_inherited_page_attributes(
+    document: &mut LopdfDocument,
+    page_ids: &[lopdf::ObjectId],
+    page_tree_root: lopdf::ObjectId,
+) -> anyhow::Result<()> {
+    const INHERITED: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+    for page_id in page_ids {
+        let page = document.get_object(*page_id)?.as_dict()?;
+        let mut missing: std::collections::BTreeSet<Vec<u8>> = INHERITED
+            .iter()
+            .filter(|key| !page.has(key))
+            .map(|key| key.to_vec())
+            .collect();
+        let mut inherited = std::collections::BTreeMap::new();
+        let mut parent = page.get(b"Parent").and_then(LopdfObject::as_reference).ok();
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(parent_id) = parent {
+            if !visited.insert(parent_id) || missing.is_empty() {
+                break;
+            }
+            let parent_dict = document.get_object(parent_id)?.as_dict()?;
+            for key in missing.clone() {
+                if let Ok(value) = parent_dict.get(&key) {
+                    inherited.insert(key.clone(), value.clone());
+                    missing.remove(&key);
+                }
+            }
+            if parent_id == page_tree_root {
+                break;
+            }
+            parent = parent_dict
+                .get(b"Parent")
+                .and_then(LopdfObject::as_reference)
+                .ok();
+        }
+        let page = document.get_object_mut(*page_id)?.as_dict_mut()?;
+        for (key, value) in inherited {
+            page.set(key, value);
+        }
+    }
+    Ok(())
+}
+
+fn merge_pdf_pages_lossless(inputs: &[PathBuf], output: &Path) -> anyhow::Result<()> {
+    let mut merged = LopdfDocument::load(&inputs[0])?;
+    let root_id = merged.trailer.get(b"Root")?.as_reference()?;
+    let pages_root_id = merged
+        .get_object(root_id)?
+        .as_dict()?
+        .get(b"Pages")?
+        .as_reference()?;
+    let mut total_pages = merged.get_pages().len();
+    anyhow::ensure!(total_pages > 0, "PDF nguồn không có trang.");
+    let mut next_object_id = merged
+        .objects
+        .keys()
+        .map(|(number, _)| *number)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+
+    for input in inputs.iter().skip(1) {
+        let mut source = LopdfDocument::load(input)?;
+        let source_root = source.trailer.get(b"Root")?.as_reference()?;
+        let source_pages_root = source
+            .get_object(source_root)?
+            .as_dict()?
+            .get(b"Pages")?
+            .as_reference()?;
+        let pages: Vec<_> = source.get_pages().into_values().collect();
+        anyhow::ensure!(
+            !pages.is_empty(),
+            "PDF nguồn không có trang: {}",
+            input.display()
+        );
+        copy_inherited_page_attributes(&mut source, &pages, source_pages_root)?;
+
+        // Copy only objects reachable from selected pages. This avoids carrying
+        // unrelated workbook/Acrobat catalog data into the merged file.
+        let mut ignored = std::collections::BTreeSet::new();
+        collect_page_tree_ids(&source, source_pages_root, &mut ignored)?;
+        ignored.insert(source_root);
+        for page_id in &pages {
+            ignored.remove(page_id);
+        }
+        let mut reachable = std::collections::BTreeSet::new();
+        for page_id in &pages {
+            reachable.insert(*page_id);
+            let page = source.get_object(*page_id)?;
+            collect_reachable_pdf_objects(&source, page, &ignored, &mut reachable);
+        }
+
+        let mut ids = std::collections::BTreeMap::new();
+        for id in reachable {
+            ids.insert(id, (next_object_id, 0));
+            next_object_id = next_object_id.saturating_add(1);
+        }
+        merged.max_id = next_object_id.saturating_sub(1);
+        let mut imported_pages = Vec::with_capacity(pages.len());
+        for old_id in &pages {
+            let object = source.get_object(*old_id)?;
+            let Some(new_id) = ids.get(old_id).copied() else {
+                continue;
+            };
+            let mut object = object.clone();
+            remap_pdf_object(&mut object, &ids);
+            if pages.contains(old_id) {
+                object.as_dict_mut()?.set("Parent", pages_root_id);
+                imported_pages.push(new_id);
+            }
+            merged.objects.insert(new_id, object);
+        }
+        for (old_id, new_id) in &ids {
+            if pages.contains(old_id) {
+                continue;
+            }
+            let mut object = source.get_object(*old_id)?.clone();
+            remap_pdf_object(&mut object, &ids);
+            merged.objects.insert(*new_id, object);
+        }
+        anyhow::ensure!(
+            imported_pages.len() == pages.len(),
+            "Không thể đọc đầy đủ cây trang PDF: {}",
+            input.display()
+        );
+        total_pages += pages.len();
+        let page_tree = merged.get_object_mut(pages_root_id)?.as_dict_mut()?;
+        let mut kids = page_tree.get(b"Kids")?.as_array()?.clone();
+        kids.extend(imported_pages.into_iter().map(LopdfObject::Reference));
+        page_tree.set("Kids", LopdfObject::Array(kids));
+        page_tree.set("Count", total_pages as i64);
+    }
+
+    merged.save(output)?;
+    Ok(())
 }
 
 pub fn default_downloads_folder() -> Option<PathBuf> {

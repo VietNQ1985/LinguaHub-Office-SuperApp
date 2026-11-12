@@ -11,3 +11,4 @@ release/
 coverage/
 msbuild-whisper.*
 src-tauri/page-scripts/
+.dev-target/

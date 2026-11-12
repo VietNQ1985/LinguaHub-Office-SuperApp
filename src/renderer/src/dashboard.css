@@ -93,6 +93,12 @@ main > section.dashboard-home {
 .office-sidebar-collapsed .office-version { justify-items:center; padding-left:0; padding-right:0; font-size:9px; }
 .office-topbar { display:flex; flex:0 0 40px; align-items:center; gap:8px; min-width:0; height:40px; padding:0 10px; border-bottom:1px solid var(--border); background:var(--surface); z-index:3; }
 .office-service-switcher { display:flex; flex:0 0 42px; align-items:center; gap:6px; min-width:0; height:42px; padding:0 14px; overflow-x:auto; border-bottom:1px solid var(--border); background:var(--surface); scrollbar-width:thin; }
+.office-messages-switcher-row { display:flex; flex:0 0 42px; align-items:stretch; min-width:0; height:42px; border-bottom:1px solid var(--border); background:var(--surface); }
+.office-messages-switcher-row > .office-service-switcher { flex:1 1 auto; border:0; }
+.office-quick-chat-group,.office-quick-chat-bar { display:flex; flex:0 0 auto; align-items:center; gap:8px; min-width:0; padding:0 10px; border-left:1px solid var(--border); background:var(--surface); }
+.office-quick-chat-group > span,.office-quick-chat-bar > span { color:var(--muted); font-size:10px; font-weight:700; white-space:nowrap; }
+.office-quick-chat-bar { flex:0 0 42px; height:42px; padding:0 14px; border:0; border-bottom:1px solid var(--border); }
+.office-quick-chat-group .office-service-switcher.erp-focus-chat,.office-quick-chat-bar .office-service-switcher.erp-focus-chat { border:0; padding:0; }
 .office-service-tab { display:inline-flex; flex:0 0 auto; align-items:center; gap:8px; height:32px; padding:0 11px; border:1px solid transparent; border-radius:8px; color:var(--muted); background:transparent; font-size:12px; font-weight:600; }
 .office-service-tab:hover { color:var(--text); background:var(--soft); }
 .office-service-tab.active { border-color:color-mix(in srgb,var(--accent) 25%,var(--border)); color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--surface)); }
@@ -106,6 +112,7 @@ main > section.dashboard-home {
 @media (max-width: 1200px) {
   .erp-focus-chat .office-service-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 }
+
 .office-back-button,.office-icon-button { display:grid; flex:0 0 36px; width:36px; height:36px; place-items:center; border:1px solid transparent; border-radius:9px; color:var(--muted); background:transparent; }
 .office-back-button:hover,.office-icon-button:hover { border-color:var(--border); color:var(--text); background:var(--soft); }
 .office-page-heading { display:grid; flex:0 0 auto; gap:1px; min-width:118px; }

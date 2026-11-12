@@ -40,6 +40,42 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 static UNLOADED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(windows)]
+fn trigger_screen_snip() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+
+    let key = |code, up| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(code),
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
+                ..Default::default()
+            },
+        },
+    };
+    let keys = [
+        key(0x5B, false), // Windows
+        key(0x10, false), // Shift
+        key(0x53, false), // S
+        key(0x53, true),
+        key(0x10, true),
+        key(0x5B, true),
+    ];
+    unsafe {
+        let sent = SendInput(&keys, std::mem::size_of::<INPUT>() as i32);
+        if sent != keys.len() as u32 {
+            log::warn!("Windows did not accept the complete screen snip shortcut");
+        }
+    }
+}
+
 pub(crate) fn set_erp_focus_shortcut<R: tauri::Runtime>(app: &AppHandle<R>, enabled: bool) {
     let shortcut = app.global_shortcut();
     if enabled && !shortcut.is_registered("F11") {
@@ -57,6 +93,19 @@ pub(crate) fn set_erp_focus_shortcut<R: tauri::Runtime>(app: &AppHandle<R>, enab
     } else if !enabled && shortcut.is_registered("F11") {
         if let Err(error) = shortcut.unregister("F11") {
             log::warn!("could not unregister ERP F11 shortcut: {error}");
+        }
+    }
+    if enabled && !shortcut.is_registered("F9") {
+        if let Err(error) = shortcut.on_shortcut("F9", |app, _, event| {
+            if event.state == ShortcutState::Pressed && !app.state::<AppState>().lock().app_locked {
+                trigger_screen_snip();
+            }
+        }) {
+            log::warn!("could not register F9 screen snip shortcut: {error}");
+        }
+    } else if !enabled && shortcut.is_registered("F9") {
+        if let Err(error) = shortcut.unregister("F9") {
+            log::warn!("could not unregister F9 screen snip shortcut: {error}");
         }
     }
 }
@@ -287,6 +336,7 @@ pub fn run() {
             commands::erp_credential_fill,
             commands::pdf_export_list_source,
             commands::pdf_export_convert,
+            commands::pdf_export_merge,
             commands::pdf_export_scan_erp_page,
             commands::erp_bookmarklet_launch,
             commands::pdf_export_convert_erp_attachment,

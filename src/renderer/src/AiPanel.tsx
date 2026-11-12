@@ -69,6 +69,12 @@ const DEFAULT_FAVORITE_PROMPTS: FavoritePromptItem[] = [
     prompt: 'Hãy soạn một phản hồi email văn phòng lịch sự, rõ ràng bằng tiếng Anh kèm bản dịch tiếng Việt cho nội dung trên.',
     builtin: true,
   },
+  {
+    id: 'fav-email-vietnamese',
+    title: '✉️ Soạn email trả lời bằng tiếng Việt',
+    prompt: 'Dựa trên email đang mở, hãy soạn một email trả lời hoàn chỉnh bằng tiếng Việt, chuyên nghiệp, lịch sự và tự nhiên. Trả lời đúng các ý chính trong email, giữ nguyên tên riêng, số liệu và thời hạn được nêu. Không tự thêm thông tin, lời hứa hoặc cam kết chưa có căn cứ. Chỉ xuất nội dung email trả lời để tôi có thể đưa vào ô soạn thư.',
+    builtin: true,
+  },
 ]
 
 const QUICK_REPLY_TEMPLATES: Array<{ label: string; text: string }> = [
@@ -159,7 +165,13 @@ function loadFavoritePrompts(): FavoritePromptItem[] {
     if (!raw) return DEFAULT_FAVORITE_PROMPTS
     const parsed = JSON.parse(raw) as FavoritePromptItem[]
     if (!Array.isArray(parsed) || !parsed.length) return DEFAULT_FAVORITE_PROMPTS
-    return parsed.filter(item => item && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.prompt === 'string')
+    const stored = parsed.filter(item => item && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.prompt === 'string')
+    const storedById = new Map(stored.map(item => [item.id, item]))
+    const builtinIds = new Set(DEFAULT_FAVORITE_PROMPTS.map(item => item.id))
+    return [
+      ...DEFAULT_FAVORITE_PROMPTS.map(item => storedById.get(item.id) ?? item),
+      ...stored.filter(item => !builtinIds.has(item.id)),
+    ]
   } catch {
     return DEFAULT_FAVORITE_PROMPTS
   }
@@ -254,6 +266,9 @@ export function AiPanel({
   const [addingPrompt, setAddingPrompt] = useState(false)
   const [promptAnswer, setPromptAnswer] = useState('')
   const [promptBusy, setPromptBusy] = useState(false)
+  const [emailReply, setEmailReply] = useState('')
+  const [emailReplyStatus, setEmailReplyStatus] = useState('')
+  const [emailReplyBusy, setEmailReplyBusy] = useState(false)
 
   // In-memory Recent Results (session-only, never auto-saved to disk without consent)
   const [recentResults, setRecentResults] = useState<RecentResultItem[]>([])
@@ -944,6 +959,50 @@ export function AiPanel({
     }
   }
 
+  const draftVietnameseEmailReply = async () => {
+    if (!replyAi || emailReplyBusy) return
+    setEmailReplyBusy(true)
+    setEmailReplyStatus('')
+    setError('')
+    try {
+      let authorized = await window.lingua.hasVisibleChatReadAuthorization()
+      if (!authorized) authorized = await window.lingua.authorizeVisibleChatRead()
+      if (!authorized) throw new Error('Anh chưa cho phép đọc nội dung email đang hiển thị.')
+      setChatReadAllowed(true)
+      const snapshot = await window.lingua.readVisibleChat()
+      const source = snapshot?.text?.trim()
+      if (!source) throw new Error('Chưa đọc được email. Mở email cần trả lời rồi thử lại.')
+      if (replyAi.startsWith('chatgpt:')) {
+        const allowed = await window.lingua.allowCloud()
+        if (!allowed) throw new Error('Anh chưa cho phép gửi email lên ChatGPT Cloud.')
+        setCloudManualAllowed(true)
+      }
+      const res = await window.lingua.runAi('ask', JSON.stringify({
+        question: 'Dựa trên email đang mở, hãy soạn một email trả lời hoàn chỉnh bằng tiếng Việt, chuyên nghiệp, lịch sự và tự nhiên. Trả lời đúng các ý chính trong email, giữ nguyên tên riêng, số liệu và thời hạn được nêu. Không tự thêm thông tin, lời hứa hoặc cam kết chưa có căn cứ. Chỉ xuất nội dung email trả lời để tôi có thể đưa vào ô soạn thư.',
+        context: source.slice(0, 7500),
+      }), replyAi, 'email-reply-' + crypto.randomUUID()) as { answer?: string } | null
+      const answer = res?.answer?.trim()
+      if (!answer) throw new Error('AI chưa tạo được nội dung trả lời.')
+      setEmailReply(answer)
+      setEmailReplyStatus('Đã soạn từ email đang mở. Anh rà soát nội dung trước khi gửi.')
+      pushRecentResult('prompt', 'Trả lời email bằng tiếng Việt', answer)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Chưa soạn được email trả lời.')
+    } finally {
+      setEmailReplyBusy(false)
+    }
+  }
+
+  const copyVietnameseEmailReply = async () => {
+    if (!emailReply.trim()) return
+    try {
+      await window.lingua.writeClipboardText(emailReply)
+      setEmailReplyStatus('Đã sao chép. Anh dán vào thư trả lời, kiểm tra người nhận rồi tự gửi.')
+    } catch {
+      setEmailReplyStatus('Không sao chép được. Anh thử lại.')
+    }
+  }
+
   // Favorite Prompts execution (supports manual text OR authorized visible chat reading)
   const runFavoritePrompt = async (useVisibleChat: boolean) => {
     const chosenPrompt =
@@ -959,7 +1018,9 @@ export function AiPanel({
     setPromptBusy(true)
     setError('')
     try {
-      let contextText = replyDraft.trim() || customPromptInput.trim()
+      // The textarea in the prompt creator contains instructions, not email
+      // content. Treating it as context made a saved prompt answer itself.
+      let contextText = replyDraft.trim()
       if (useVisibleChat) {
         let authorized = await window.lingua.hasVisibleChatReadAuthorization()
         if (!authorized) {
@@ -978,7 +1039,7 @@ export function AiPanel({
         contextText = snapshot.text.trim().slice(0, 7500)
       }
       if (!contextText) {
-        setError('Hãy nhập nội dung vào ô soạn thảo hoặc bấm "Đọc chat đang mở & Chạy".')
+        setError('Hãy nhập nội dung email vào ô Ý trả lời hoặc bấm "Đọc chat đang mở & Chạy".')
         return
       }
       if (replyAi.startsWith('chatgpt:')) {
@@ -1017,7 +1078,10 @@ export function AiPanel({
   const saveNewFavoritePrompt = () => {
     const title = newPromptTitle.trim()
     const prompt = customPromptInput.trim()
-    if (!title || !prompt) return
+    if (!title || !prompt) {
+      setError('Nhập đủ tên và nội dung Prompt trước khi lưu.')
+      return
+    }
     const nextItem: FavoritePromptItem = {
       id: 'fav-' + Date.now(),
       title,
@@ -1027,7 +1091,9 @@ export function AiPanel({
     setFavoritePrompts(updated)
     setSelectedPromptId(nextItem.id)
     setNewPromptTitle('')
+    setCustomPromptInput('')
     setAddingPrompt(false)
+    setError('')
     try {
       localStorage.setItem(FAVORITE_PROMPTS_KEY, JSON.stringify(updated))
     } catch {
@@ -1352,6 +1418,22 @@ export function AiPanel({
               aria-labelledby="reply-composer-title"
               style={{ display: showComposeSection ? 'block' : 'none' }}
             >
+              {service === 'outlook' && (
+                <section className="email-reply-card" aria-labelledby="email-reply-title">
+                  <div className="email-reply-heading">
+                    <span aria-hidden="true">✉</span>
+                    <div><h3 id="email-reply-title">Trả lời email bằng tiếng Việt</h3><p>Soạn riêng từ email Outlook đang mở</p></div>
+                  </div>
+                  <button type="button" className="primary-button email-reply-generate" disabled={!replyAi || emailReplyBusy} onClick={() => void draftVietnameseEmailReply()}>
+                    {emailReplyBusy ? 'Đang soạn email…' : emailReply ? 'Soạn lại từ email đang mở' : '✦ Soạn trả lời bằng AI'}
+                  </button>
+                  {emailReply && <>
+                    <label htmlFor="email-reply-draft">Nội dung trả lời · tiếng Việt</label>
+                    <textarea id="email-reply-draft" className="email-reply-draft" value={emailReply} maxLength={4000} onChange={event => { setEmailReply(event.target.value); setEmailReplyStatus('Nội dung đã sửa. Hãy rà soát trước khi gửi.') }} />
+                    <div className="email-reply-actions"><button type="button" className="secondary-button" onClick={() => void copyVietnameseEmailReply()}>Sao chép nội dung</button><small>{emailReplyStatus}</small></div>
+                  </>}
+                </section>
+              )}
               <div
                 className="composer-heading"
                 title={

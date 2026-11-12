@@ -129,7 +129,7 @@ pub fn install_quick_chat_dismissal<R: Runtime>(view: &Webview<R>) {
             Ok(())
         }));
         let mut token = 0;
-        let _ = platform.controller().add_GotFocus(&handler, &mut token);
+        let _ = platform.controller().add_LostFocus(&handler, &mut token);
     });
 }
 
