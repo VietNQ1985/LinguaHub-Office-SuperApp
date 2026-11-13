@@ -25,7 +25,10 @@ fn fail(error: impl std::fmt::Display) -> String {
 }
 
 fn trusted(webview: &Webview) -> Res<()> {
-    if webview.label() == "ui" {
+    if matches!(webview.label(), "ui" | "erp-panel") {
+        if webview.state::<AppState>().lock().app_locked {
+            return Err("LinguaHub đang khóa.".into());
+        }
         Ok(())
     } else {
         Err("Untrusted sender".into())
@@ -37,6 +40,211 @@ fn sleep(ms: u64) -> tokio::time::Sleep {
 }
 
 // ---------- window, tabs, layout ----------
+
+#[tauri::command]
+pub fn app_lock_state(webview: Webview, state: State<AppState>) -> Res<Value> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    Ok(json!({
+        "locked": state.lock().app_locked,
+        "configured": state.store.app_lock_verifier().is_some(),
+    }))
+}
+
+#[tauri::command]
+pub fn app_lock(webview: Webview, app: AppHandle) -> Res<Value> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.lock();
+        inner.app_locked = true;
+        inner.quick_chat = None;
+        inner.quick_chat_changed_at = None;
+        inner.quick_chat_layout = None;
+        inner.chat_read_authorized = false;
+        inner.background_cloud_consent = false;
+    }
+    state.stop_meeting();
+    workspace::layout(&app);
+    let _ = app.emit_to("ui", "erp-quick-chat", None::<String>);
+    let _ = webview.set_focus();
+    app_lock_state(webview, state)
+}
+
+#[tauri::command]
+pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let state = app.state::<AppState>();
+    let app_locked = { state.lock().app_locked };
+    if !app_locked || state.store.app_lock_verifier().is_none() {
+        return Err("LinguaHub chưa được thiết lập khóa.".into());
+    }
+    #[cfg(windows)]
+    {
+        let window = app.get_window("main").ok_or("Chưa có cửa sổ.")?;
+        let hwnd = window.hwnd().map_err(fail)?;
+        {
+            let mut inner = state.lock();
+            if inner
+                .unlock_after
+                .is_some_and(|until| until > std::time::Instant::now())
+            {
+                return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+            }
+            inner.unlock_after = Some(std::time::Instant::now() + Duration::from_secs(3));
+        }
+
+        let hwnd = hwnd.0 as isize;
+        let message = "Xác thực để mở khóa LinguaHub".to_owned();
+        let verified =
+            tauri::async_runtime::spawn_blocking(move || windows_hello_verify(hwnd, &message))
+                .await
+                .map_err(fail)??;
+        if !verified {
+            return Err("Windows Hello chưa xác thực thành công. Anh có thể dùng PIN.".into());
+        }
+        {
+            let mut inner = state.lock();
+            inner.app_locked = false;
+            inner.unlock_after = None;
+        }
+        workspace::layout(&app);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("Mở khóa sinh trắc học hiện chỉ hỗ trợ Windows Hello.".into())
+    }
+}
+
+#[cfg(windows)]
+fn windows_hello_verify(hwnd: isize, message: &str) -> Res<bool> {
+    use windows::core::HSTRING;
+    use windows::Security::Credentials::UI::UserConsentVerificationResult;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::WinRT::{
+        IUserConsentVerifierInterop, RoGetActivationFactory, RoInitialize, RoUninitialize,
+        RO_INIT_MULTITHREADED,
+    };
+    use windows_future::AsyncStatus;
+    use windows_future::IAsyncOperation;
+
+    struct WinRtApartment;
+    impl Drop for WinRtApartment {
+        fn drop(&mut self) {
+            unsafe { RoUninitialize() };
+        }
+    }
+
+    unsafe { RoInitialize(RO_INIT_MULTITHREADED) }
+        .map_err(|error| format!("Không khởi tạo được Windows Runtime: {error}"))?;
+    let _apartment = WinRtApartment;
+
+    let factory: IUserConsentVerifierInterop = unsafe {
+        RoGetActivationFactory(&HSTRING::from(
+            "Windows.Security.Credentials.UI.UserConsentVerifier",
+        ))
+    }
+    .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
+    let operation: IAsyncOperation<UserConsentVerificationResult> = unsafe {
+        factory.RequestVerificationForWindowAsync(HWND(hwnd as *mut _), &HSTRING::from(message))
+    }
+    .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
+    let result = loop {
+        match operation
+            .Status()
+            .map_err(|error| format!("Không đọc được trạng thái Windows Hello: {error}"))?
+        {
+            AsyncStatus::Started => std::thread::sleep(Duration::from_millis(100)),
+            AsyncStatus::Completed => break operation.GetResults().map_err(fail)?,
+            AsyncStatus::Canceled => return Ok(false),
+            AsyncStatus::Error => {
+                let error = operation.ErrorCode().map_err(fail)?;
+                return Err(format!("Windows Hello báo lỗi: {error}"));
+            }
+            _ => return Err("Windows Hello trả về trạng thái không xác định.".into()),
+        }
+    };
+    if result == UserConsentVerificationResult::Verified {
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn app_unlock(webview: Webview, app: AppHandle, pin: String) -> Res<()> {
+    use ring::{
+        pbkdf2,
+        rand::{SecureRandom, SystemRandom},
+    };
+    use std::{num::NonZeroU32, time::Instant};
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let pin = zeroize::Zeroizing::new(pin);
+    if !(6..=12).contains(&pin.len()) || !pin.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("PIN phải có từ 6 đến 12 chữ số.".into());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut inner = state.lock();
+        if !inner.app_locked {
+            return Err("LinguaHub chưa khóa.".into());
+        }
+        if inner
+            .unlock_after
+            .is_some_and(|until| until > Instant::now())
+        {
+            return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+        }
+        inner.unlock_after = Some(Instant::now() + Duration::from_secs(3));
+    }
+    let rounds = NonZeroU32::new(600_000).unwrap();
+    if let Some(saved) = state.store.app_lock_verifier() {
+        let (salt, digest) = saved.split_once(':').ok_or("Không đọc được PIN đã lưu.")?;
+        let salt = hex::decode(salt).map_err(fail)?;
+        let digest = hex::decode(digest).map_err(fail)?;
+        pbkdf2::verify(
+            pbkdf2::PBKDF2_HMAC_SHA256,
+            rounds,
+            &salt,
+            pin.as_bytes(),
+            &digest,
+        )
+        .map_err(|_| "PIN không đúng.".to_owned())?;
+    } else {
+        let mut salt = [0; 16];
+        SystemRandom::new()
+            .fill(&mut salt)
+            .map_err(|_| "Không tạo được PIN.")?;
+        let mut digest = [0; 32];
+        pbkdf2::derive(
+            pbkdf2::PBKDF2_HMAC_SHA256,
+            rounds,
+            &salt,
+            pin.as_bytes(),
+            &mut digest,
+        );
+        state
+            .store
+            .set_app_lock_verifier(&format!("{}:{}", hex::encode(salt), hex::encode(digest)))
+            .map_err(fail)?;
+    }
+    {
+        let mut inner = state.lock();
+        inner.app_locked = false;
+        inner.unlock_after = None;
+    }
+    workspace::layout(&app);
+    Ok(())
+}
 
 #[tauri::command]
 pub fn window_tray(webview: Webview, app: AppHandle) -> Res<bool> {
@@ -62,6 +270,7 @@ pub fn workspace_panel_layout(
     app: AppHandle,
     state: State<AppState>,
     panel_width: i64,
+    pinned: Option<bool>,
     collapsed: bool,
     persist: bool,
 ) -> Res<()> {
@@ -80,9 +289,13 @@ pub fn workspace_panel_layout(
     {
         let mut inner = state.lock();
         inner.panel_width = panel;
+        if let Some(pinned) = pinned {
+            inner.panel_pinned = pinned;
+        }
         inner.panel_collapsed = collapsed;
     }
     workspace::layout(&app);
+    let _ = app.emit("erp-panel-state", focus_panel_snapshot(&app, &state));
     if persist {
         let _ = state.store.set_panel_width(panel as i64);
     }
@@ -100,6 +313,98 @@ pub fn workspace_sidebar_layout(
     state.lock().sidebar_width = if collapsed { 68.0 } else { 232.0 };
     workspace::layout(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn workspace_focus_mode(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    let window = app.get_window("main");
+    let restore_maximized = {
+        let mut inner = state.lock();
+        let restore = if enabled {
+            window
+                .as_ref()
+                .and_then(|window| window.is_maximized().ok())
+                .unwrap_or(false)
+        } else {
+            inner.focus_restore_maximized
+        };
+        if enabled {
+            inner.focus_restore_maximized = restore;
+        }
+        inner.focus_mode = enabled;
+        restore
+    };
+    if let Some(window) = window {
+        if enabled {
+            let _ = window.maximize();
+        } else if !restore_maximized {
+            let _ = window.unmaximize();
+        }
+        if !enabled {
+            let _ = window.show();
+        }
+    }
+    if enabled {
+        if let Err(error) = workspace::recreate_erp_focus_panel(&app) {
+            log::error!("could not create the floating ERP panel: {error:#}");
+            eprintln!("could not create the floating ERP panel: {error:#}");
+            state.lock().focus_mode = false;
+            if !restore_maximized {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.unmaximize();
+                }
+            }
+            workspace::layout(&app);
+            return Err(fail(error));
+        }
+        if let Some(panel) = app.get_webview_window("erp-panel") {
+            let _ = panel.set_focus();
+        }
+    } else if let Some(panel) = app.get_webview_window("erp-panel") {
+        let _ = panel.hide();
+    }
+    workspace::layout(&app);
+    if !enabled {
+        if let Some(window) = app.get_window("main") {
+            let _ = window.set_focus();
+        }
+    }
+    let _ = app.emit("erp-panel-state", focus_panel_snapshot(&app, &state));
+    Ok(())
+}
+
+fn focus_panel_snapshot(app: &AppHandle, state: &AppState) -> Value {
+    let (collapsed, width, pinned) = {
+        let inner = state.lock();
+        (inner.panel_collapsed, inner.panel_width, inner.panel_pinned)
+    };
+    let active_tab = workspace::current_view(app)
+        .filter(|(id, _)| id.starts_with("web-"))
+        .and_then(|(id, view)| {
+            let url = view.url().ok()?;
+            Some(json!({
+                "id": id,
+                "name": url.host_str().unwrap_or("ERP"),
+                "address": url.origin().ascii_serialization(),
+            }))
+        });
+    json!({"collapsed": collapsed, "width": width, "pinned": pinned, "activeTab": active_tab})
+}
+
+#[tauri::command]
+pub fn workspace_focus_panel_state(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Res<Value> {
+    trusted(&webview)?;
+    Ok(focus_panel_snapshot(&app, &state))
 }
 
 #[tauri::command]
@@ -126,6 +431,29 @@ pub fn workspace_unread(webview: Webview, state: State<AppState>) -> Res<Value> 
 }
 
 #[tauri::command]
+pub async fn workspace_quick_chat(
+    webview: Webview,
+    app: AppHandle,
+    service: Option<String>,
+) -> Res<()> {
+    trusted(&webview)?;
+    workspace::set_quick_chat(&app, service).map_err(fail)
+}
+
+#[tauri::command]
+pub fn workspace_erp_tabs_position(
+    webview: Webview,
+    app: AppHandle,
+    state: State<AppState>,
+    bottom: bool,
+) -> Res<()> {
+    trusted(&webview)?;
+    state.lock().erp_tabs_bottom = bottom;
+    workspace::layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn workspace_open(webview: Webview, app: AppHandle, service: String) -> Res<Value> {
     trusted(&webview)?;
     app.state::<AppState>().store.set_last_app(&service);
@@ -136,12 +464,19 @@ pub async fn workspace_open(webview: Webview, app: AppHandle, service: String) -
 pub async fn web_tab_open(
     webview: Webview,
     app: AppHandle,
+    state: State<'_, AppState>,
     id: String,
     address: String,
     close: bool,
 ) -> Res<()> {
     trusted(&webview)?;
-    workspace::open_web_tab(&app, &id, &address, close).map_err(fail)
+    workspace::open_web_tab(&app, &id, &address, close).map_err(fail)?;
+    let _ = app.emit_to(
+        "erp-panel",
+        "erp-panel-state",
+        focus_panel_snapshot(&app, &state),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -529,6 +864,23 @@ pub async fn pdf_export_convert(
 }
 
 #[tauri::command]
+pub async fn pdf_export_merge(
+    webview: Webview,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+    file_name: String,
+) -> Res<crate::pdf_export::PdfExportResult> {
+    trusted(&webview)?;
+    let settings = ensure_pdf_export_signing_settings(&state).await?;
+    tokio::task::spawn_blocking(move || {
+        crate::pdf_export::merge_exported_pdfs(&paths, &file_name, &settings)
+    })
+    .await
+    .map_err(fail)?
+    .map_err(fail)
+}
+
+#[tauri::command]
 pub async fn erp_bookmarklet_launch(
     webview: Webview,
     app: AppHandle,
@@ -594,9 +946,8 @@ pub async fn pdf_export_scan_erp_page(
             fallback = Some(snap);
         }
     }
-    fallback.ok_or_else(|| {
-        "Không quét được trang ERP. Anh chờ phiếu mở xong rồi bấm quét lại.".into()
-    })
+    fallback
+        .ok_or_else(|| "Không quét được trang ERP. Anh chờ phiếu mở xong rồi bấm quét lại.".into())
 }
 
 fn expand_truncated_pdf_name(
@@ -643,13 +994,17 @@ pub async fn pdf_export_convert_erp_attachment(
 
     // Re-scan live DOM so a stale attachment URL (for example href="#", which
     // resolves to the ERP form itself) cannot be mistaken for the file.
-    let capture_scan = crate::pdf_export::ERP_SCAN_SCRIPT
-        .replacen("const capture = false;", "const capture = true;", 1);
-    let live_snapshot = wv::eval_json(&view, &capture_scan)
-        .await
-        .ok();
+    let capture_scan = crate::pdf_export::ERP_SCAN_SCRIPT.replacen(
+        "const capture = false;",
+        "const capture = true;",
+        1,
+    );
+    let live_snapshot = wv::eval_json(&view, &capture_scan).await.ok();
     let normalize_name = |name: &str| {
-        name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     };
     let requested_name = normalize_name(&display_name);
     let live_attachment = live_snapshot
@@ -658,7 +1013,9 @@ pub async fn pdf_export_convert_erp_attachment(
         .and_then(|attachments| {
             let matches_name = |attachment: &Value| {
                 ["displayName", "fullName"].into_iter().any(|key| {
-                    let Some(name) = attachment[key].as_str() else { return false };
+                    let Some(name) = attachment[key].as_str() else {
+                        return false;
+                    };
                     let name = normalize_name(name);
                     if name == requested_name {
                         return true;
@@ -667,7 +1024,9 @@ pub async fn pdf_export_convert_erp_attachment(
                         .strip_suffix("...")
                         .or_else(|| name.strip_suffix('…'))
                         .map(str::trim_end);
-                    prefix.is_some_and(|prefix| prefix.len() >= 12 && requested_name.starts_with(prefix))
+                    prefix.is_some_and(|prefix| {
+                        prefix.len() >= 12 && requested_name.starts_with(prefix)
+                    })
                 })
             };
             attachments
@@ -676,7 +1035,9 @@ pub async fn pdf_export_convert_erp_attachment(
                     attachment["id"].as_str() == Some(att_id.as_str()) && matches_name(attachment)
                 })
                 .or_else(|| {
-                    let mut matches = attachments.iter().filter(|attachment| matches_name(attachment));
+                    let mut matches = attachments
+                        .iter()
+                        .filter(|attachment| matches_name(attachment));
                     let first = matches.next()?;
                     matches.next().is_none().then_some(first)
                 })

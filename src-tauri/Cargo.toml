@@ -1,6 +1,6 @@
 [package]
 name = "linguahub-office-superapp"
-version = "0.4.15"
+version = "0.4.25"
 description = "LinguaHub on Tauri: messaging workspace with on-device chat translation"
 edition = "2021"
 rust-version = "1.88"
@@ -20,6 +20,7 @@ tauri-plugin-window-state = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2.3.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "net", "io-util"] }
@@ -37,6 +38,7 @@ url = "2"
 zeroize = "1.9"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rand = "0.9"
+ring = "0.17"
 anyhow = "1"
 jsonwebtoken = "9"
 log = "0.4"
@@ -58,10 +60,16 @@ windows = { version = "0.62", features = [
   "Win32_Security_Credentials",
   "Win32_Security_Cryptography",
   "Win32_System_Memory",
+  "Win32_System_WinRT",
+  "Win32_System_SystemInformation",
+  "Security_Credentials_UI",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
 ] }
 windows-core = "0.62"
+windows-future = "0.3.2"
 oxidize-pdf = { version = "5.5.7", default-features = false, features = ["compression", "signatures"] }
+lopdf = { version = "0.38", default-features = false }
 
 [profile.release]
 codegen-units = 1

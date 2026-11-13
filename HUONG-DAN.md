@@ -2,7 +2,7 @@
 
 LinguaHub gom các ứng dụng nhắn tin/họp (WhatsApp, Telegram, Microsoft Teams, Outlook, Zalo Web, Zoom, Google Meet) vào một cửa sổ. Khung bên phải dịch tin nhắn sang tiếng Việt, gợi ý câu trả lời bằng tiếng Anh và có phụ đề cuộc họp.
 
-Bản Office 0.4.2 sửa quyền cloud cho gợi ý công việc từ chat/email và bổ sung nút cấp quyền ngay tại thẻ gợi ý. Bản này cũng sửa việc Dashboard không nhận mô hình AI mặc định/đã lưu trong Cài đặt; đồng thời giữ AI Memory có chọn lọc, Prompt Studio, Dashboard và điều hướng workspace. Bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
+Bản Office hiện tại 0.4.25 bổ sung mở khóa bằng Windows Hello (bao gồm vân tay nếu thiết bị đã cài đặt) và tự khóa sau 10 phút LinguaHub không hoạt động. PIN của ứng dụng vẫn dùng được để mở khóa dự phòng. Bản này giữ chức năng soạn thư trả lời bằng tiếng Việt từ email Outlook đang mở. Bản LinguaHub AI Pro 0.2.16 vẫn hoạt động độc lập:
 
 | | Bản Tauri (Rust) — khuyên dùng | Bản Electron |
 |---|---|---|

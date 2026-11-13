@@ -22,7 +22,7 @@ import {
   type ErpSampleFolder,
   type ErpToolId,
 } from './erpFileTools'
-import { PdfExportPanel, PdfExportSettingsForm } from './PdfExportPanel'
+import { PdfExportPanel } from './PdfExportPanel'
 import { ErpBookmarkletPanel } from './ErpBookmarkletPanel'
 
 type SampleSearchResult = {
@@ -749,7 +749,7 @@ export function SampleFilePanel({
           ['attachments', '📎', 'Tệp ERP', 'Tệp đính kèm trên phiếu ERP và lưu PDF'],
           ['sample', '🔎', 'Sample ID', 'Tra cứu và xử lý tệp theo mã mẫu'],
           ['bookmarklets', '⚡', 'M1A · M7K', 'Mở công cụ đối chiếu M1A và Dashboard M7K'],
-          ['settings', '⚙', 'Cài đặt', 'Thư mục tải về, thư mục lưu PDF và mẫu tên tệp'],
+          ['settings', '🔑', 'Tài khoản', 'Thông tin đăng nhập của tab ERP'],
         ] as const).map(([section, icon, label, tooltip]) => (
           <button
             key={section}
@@ -824,7 +824,7 @@ export function SampleFilePanel({
           activeTabId={activeTab?.id ?? ''}
           sampleId={result?.sampleId || sampleId.trim()}
           sampleFiles={selectedFiles}
-          onOpenSettings={() => setActivePanelSection('settings')}
+          onOpenSettings={openSettingsCenter}
         />
       )}
 
@@ -833,7 +833,7 @@ export function SampleFilePanel({
       {activePanelSection === 'settings' && (
         <section className="erp-panel-settings" aria-label="Cài đặt ERP">
           <div className="erp-panel-settings-head">
-            <h3>Cài đặt tệp ERP</h3>
+            <h3>Tài khoản ERP</h3>
             {onOpenSettings && (
               <button
                 type="button"
@@ -921,7 +921,6 @@ export function SampleFilePanel({
             )}
             {erpCredentialNotice && <p className="helper-text erp-password-notice" role="status">{erpCredentialNotice}</p>}
           </section>
-          <PdfExportSettingsForm compact />
         </section>
       )}
 
@@ -934,7 +933,7 @@ export function SampleFilePanel({
             Nguồn tìm kiếm: <strong>{roots.length}</strong> thư mục gốc · Mẫu:{' '}
             <strong>{templateFolder ? templateFolder.split(/[/\\]/).filter(Boolean).pop() : 'Tất cả'}</strong>
           </small>
-          <button type="button" className="text-button" onClick={() => setActivePanelSection('settings')}>
+          <button type="button" className="text-button" onClick={openSettingsCenter}>
             Chỉnh nguồn tệp
           </button>
         </div>

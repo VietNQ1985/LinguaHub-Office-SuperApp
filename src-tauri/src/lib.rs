@@ -33,9 +33,82 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl, WindowEvent,
+};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 static UNLOADED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+fn trigger_screen_snip() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+
+    let key = |code, up| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(code),
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
+                ..Default::default()
+            },
+        },
+    };
+    let keys = [
+        key(0x5B, false), // Windows
+        key(0x10, false), // Shift
+        key(0x53, false), // S
+        key(0x53, true),
+        key(0x10, true),
+        key(0x5B, true),
+    ];
+    unsafe {
+        let sent = SendInput(&keys, std::mem::size_of::<INPUT>() as i32);
+        if sent != keys.len() as u32 {
+            log::warn!("Windows did not accept the complete screen snip shortcut");
+        }
+    }
+}
+
+pub(crate) fn set_erp_focus_shortcut<R: tauri::Runtime>(app: &AppHandle<R>, enabled: bool) {
+    let shortcut = app.global_shortcut();
+    if enabled && !shortcut.is_registered("F11") {
+        if let Err(error) = shortcut.on_shortcut("F11", |app, _, event| {
+            if event.state != ShortcutState::Pressed || app.state::<AppState>().lock().app_locked {
+                return;
+            }
+            // Registration is already scoped to the app's focused windows. Avoid
+            // querying native focus here: embedded WebView focus can make the
+            // parent report false on Windows and silently swallow F11.
+            let _ = app.emit_to("ui", "erp-focus-toggle", ());
+        }) {
+            log::warn!("could not register ERP F11 shortcut: {error}");
+        }
+    } else if !enabled && shortcut.is_registered("F11") {
+        if let Err(error) = shortcut.unregister("F11") {
+            log::warn!("could not unregister ERP F11 shortcut: {error}");
+        }
+    }
+    if enabled && !shortcut.is_registered("F9") {
+        if let Err(error) = shortcut.on_shortcut("F9", |app, _, event| {
+            if event.state == ShortcutState::Pressed && !app.state::<AppState>().lock().app_locked {
+                trigger_screen_snip();
+            }
+        }) {
+            log::warn!("could not register F9 screen snip shortcut: {error}");
+        }
+    } else if !enabled && shortcut.is_registered("F9") {
+        if let Err(error) = shortcut.unregister("F9") {
+            log::warn!("could not unregister F9 screen snip shortcut: {error}");
+        }
+    }
+}
 
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_window("main") {
@@ -86,7 +159,25 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_main(app),
             "quit" => {
                 app.state::<AppState>().lock().quitting = true;
-                app.exit(0);
+                for (label, window) in app.webview_windows() {
+                    if label != "main" {
+                        let _ = window.close();
+                    }
+                }
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.hide();
+                }
+                let exit_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if !UNLOADED.swap(true, Ordering::SeqCst) {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            ai::unload_used_models(),
+                        )
+                        .await;
+                    }
+                    exit_app.exit(0);
+                });
             }
             service @ ("whatsapp" | "teams" | "zalo") => workspace::activate(app, service),
             _ => {}
@@ -118,6 +209,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(models::SCHEME, |context, request, responder| {
             let app = context.app_handle().clone();
             let path = request.uri().path().to_owned();
@@ -147,8 +239,11 @@ pub fn run() {
                 .min_inner_size(1000.0, 600.0)
                 .visible(true)
                 .build()?;
+            set_erp_focus_shortcut(&handle, true);
             let size = window.inner_size()?;
             let scale = window.scale_factor()?;
+            let idle_activity =
+                std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
             let ui = WebviewBuilder::new("ui", WebviewUrl::App("index.html".into()))
                 .additional_browser_args(workspace::BROWSER_ARGS)
                 .auto_resize()
@@ -166,11 +261,26 @@ pub fn run() {
                 LogicalSize::new(size.width as f64 / scale, size.height as f64 / scale),
             )?;
             let _ = wv::install_permissions(&ui, ui_permissions(&handle));
-
             let resize_handle = handle.clone();
+            let focus_activity = idle_activity.clone();
             window.on_window_event(move |event| match event {
-                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                    workspace::layout(&resize_handle)
+                WindowEvent::Resized(_)
+                | WindowEvent::Moved(_)
+                | WindowEvent::ScaleFactorChanged { .. } => workspace::layout(&resize_handle),
+                WindowEvent::Focused(focused) => {
+                    if let Ok(mut last_activity) = focus_activity.lock() {
+                        *last_activity = std::time::Instant::now();
+                    }
+                    if *focused {
+                        set_erp_focus_shortcut(&resize_handle, true);
+                    } else {
+                        let panel_focused = resize_handle
+                            .get_webview_window("erp-panel")
+                            .and_then(|panel| panel.is_focused().ok())
+                            .unwrap_or(false);
+                        set_erp_focus_shortcut(&resize_handle, panel_focused);
+                    }
+                    workspace::layout(&resize_handle);
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     // Closing hides to the tray; "Thoát hoàn toàn" quits.
@@ -190,6 +300,8 @@ pub fn run() {
             stt::start_idle_unloader(handle.clone());
             task_reminders::start(handle.clone());
             workspace::start_polling(handle);
+            #[cfg(windows)]
+            start_idle_app_lock(app.handle().clone(), idle_activity);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -198,8 +310,16 @@ pub fn run() {
             commands::tasks_save,
             commands::tasks_delete,
             commands::window_tray,
+            commands::app_lock_state,
+            commands::app_lock,
+            commands::app_unlock,
+            commands::app_unlock_biometric,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
+            commands::workspace_focus_mode,
+            commands::workspace_quick_chat,
+            commands::workspace_erp_tabs_position,
+            commands::workspace_focus_panel_state,
             commands::workspace_sidebar_layout,
             commands::workspace_service_tabs_layout,
             commands::workspace_unread,
@@ -225,6 +345,7 @@ pub fn run() {
             commands::erp_credential_fill,
             commands::pdf_export_list_source,
             commands::pdf_export_convert,
+            commands::pdf_export_merge,
             commands::pdf_export_scan_erp_page,
             commands::erp_bookmarklet_launch,
             commands::pdf_export_convert_erp_attachment,
@@ -329,10 +450,75 @@ pub fn run() {
                     api.prevent_exit();
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        ai::unload_used_models().await;
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            ai::unload_used_models(),
+                        )
+                        .await;
                         handle.exit(0);
                     });
                 }
             }
         });
+}
+
+#[cfg(windows)]
+fn start_idle_app_lock(
+    app: AppHandle,
+    last_activity: std::sync::Arc<std::sync::Mutex<std::time::Instant>>,
+) {
+    use windows::Win32::System::SystemInformation::GetTickCount;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let Some(window) = app.get_window("main") else {
+                continue;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            if state.lock().app_locked || state.store.app_lock_verifier().is_none() {
+                continue;
+            }
+            if window.is_focused().unwrap_or(false) {
+                let mut info = LASTINPUTINFO {
+                    cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                    dwTime: 0,
+                };
+                if unsafe { GetLastInputInfo(&mut info) }.as_bool() {
+                    let system_idle_ms = unsafe { GetTickCount() }.wrapping_sub(info.dwTime);
+                    if system_idle_ms < 8_000 {
+                        if let Ok(mut last) = last_activity.lock() {
+                            *last = std::time::Instant::now();
+                        }
+                    }
+                }
+            }
+            let idle_for = last_activity
+                .lock()
+                .map(|last| last.elapsed())
+                .unwrap_or_default();
+            if idle_for >= std::time::Duration::from_secs(10 * 60) {
+                let mut inner = state.lock();
+                if inner.app_locked {
+                    continue;
+                }
+                inner.app_locked = true;
+                inner.quick_chat = None;
+                inner.quick_chat_changed_at = None;
+                inner.quick_chat_layout = None;
+                inner.chat_read_authorized = false;
+                inner.background_cloud_consent = false;
+                drop(inner);
+                state.stop_meeting();
+                workspace::layout(&app);
+                let _ = app.emit_to("ui", "erp-quick-chat", None::<String>);
+                let _ = app.emit_to("ui", "app-lock-changed", ());
+            }
+        }
+    });
 }

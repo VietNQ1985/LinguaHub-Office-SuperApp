@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Only the LinguaHub UI webview may call commands. Service pages (WhatsApp, Teams, Zalo, Zoom, Meet) are remote origins and get no IPC access.",
-  "windows": ["main"],
-  "webviews": ["ui"],
+  "description": "The LinguaHub UI and isolated ERP overlay may call app commands. Service pages remain untrusted.",
+  "windows": ["main", "erp-panel"],
+  "webviews": ["ui", "erp-panel"],
   "permissions": ["core:default"]
 }

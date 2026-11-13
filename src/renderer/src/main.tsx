@@ -2,8 +2,11 @@ import { WorkTasks, type TaskSourceSnapshot } from './WorkTasks'
 import { WorkspaceForm } from './WorkspaceForm'
 import { SampleFileFinder } from './SampleFileFinder'
 import { SampleFilePanel } from './SampleFilePanel'
+import { ErpFloatingPanel } from './ErpFloatingPanel'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import './style.css'
 import './dashboard.css'
 import './bridge'
@@ -36,6 +39,13 @@ import type {
 import type { ErpFileInspection } from './erpFileTools'
 import {
   ArrowLeft,
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowUpToLine,
+  Fingerprint,
+  LockKeyhole,
+  Maximize2,
+  Minimize2,
   Moon,
   PanelRightClose,
   PanelRightOpen,
@@ -93,6 +103,7 @@ declare global {
       ): Promise<import('./pdfExport').PdfExportSettings>
       listPdfExportSource(): Promise<import('./erpFileTools').ErpSampleFile[]>
       convertToPdf(path: string, fileName: string): Promise<import('./pdfExport').PdfExportResult>
+      mergePdfOutputs(paths: string[], fileName: string): Promise<import('./pdfExport').PdfExportResult>
       scanErpPageAttachments(tabId: string): Promise<import('./pdfExport').ErpPageSnapshot>
       launchErpBookmarklet(tool: 'm1a' | 'm7k'): Promise<{message: string}>
       convertErpAttachmentToPdf(
@@ -126,7 +137,11 @@ declare global {
       hideToTray(): Promise<boolean>
       onShortcut(callback: (action: string) => void): () => void
       reloadWorkspace(): Promise<{ title: string }>
-      setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean): void
+      setWorkspacePanelLayout(width: number, collapsed: boolean, persist?: boolean, pinned?: boolean): void
+      setWorkspaceFocusMode(enabled: boolean): Promise<void>
+      setWorkspaceQuickChat(service: AppId | null): Promise<void>
+      setWorkspaceErpTabsPosition(bottom: boolean): Promise<void>
+      getWorkspaceFocusPanelState(): Promise<{ collapsed: boolean; width: number; pinned: boolean; activeTab: { id: string; name: string; address: string } | null }>
       openWorkspace(service: WorkspaceService): Promise<{ title: string }>
       showDashboard(): Promise<boolean>
       openExternal(service: WorkspaceService): Promise<void>
@@ -327,15 +342,15 @@ declare global {
   }
 }
 
-function App() {
+function App({ onLock }: { onLock: () => void }) {
   const [activeArea, setActiveArea] = React.useState<OfficeArea>('dashboard')
   const activeAreaRef = React.useRef<OfficeArea>(activeArea)
   activeAreaRef.current = activeArea
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
     try {
-      return localStorage.getItem('linguahub.office.sidebar.v1') === 'collapsed'
+      return localStorage.getItem('linguahub.office.sidebar.v2') !== 'expanded'
     } catch {
-      return false
+      return true
     }
   })
   const [theme, setTheme] = React.useState<'light' | 'dark'>('light')
@@ -378,6 +393,11 @@ function App() {
       return webTabs.at(-1)?.id || ''
     }
   })
+  const [erpAddress, setErpAddress] = React.useState('')
+  const erpAddressInput = React.useRef<HTMLInputElement>(null)
+  React.useEffect(() => {
+    setErpAddress(webTabs.find(tab => tab.id === activeWeb)?.address || '')
+  }, [activeWeb, webTabs])
   const [erpOpen, setErpOpen] = React.useState(false)
   const [erpRightPanelView, setErpRightPanelView] = React.useState<'files' | 'ai'>('files')
   const [sampleFinderOpen, setSampleFinderOpen] = React.useState(false)
@@ -479,6 +499,41 @@ function App() {
     setWorkspaceForm('tab')
     setPanelCollapsed(false)
   }
+  const submitErpAddress = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const entered = erpAddress.trim()
+    if (!entered) return
+    if (/^[a-z][a-z\d+.-]*:\/\//i.test(entered) && !/^https:\/\//i.test(entered)) {
+      setStatus('ERP chỉ mở địa chỉ HTTPS.')
+      return
+    }
+    let target: URL
+    try {
+      target = new URL(/^https:\/\//i.test(entered) ? entered : `https://${entered}`)
+      if (target.protocol !== 'https:' || target.username || target.password || !target.hostname)
+        throw new Error('invalid URL')
+    } catch {
+      setStatus('Địa chỉ không hợp lệ. Anh nhập một URL HTTPS nhé.')
+      return
+    }
+    const existing = webTabs.find(tab => tab.id === activeWeb)
+    if (existing) {
+      const updated = { ...existing, address: target.href, transient: false }
+      if (await openWeb(updated)) {
+        setWebTabs(tabs => tabs.map(tab => tab.id === existing.id ? updated : tab))
+      }
+      return
+    }
+    if (webTabs.length >= 20) {
+      setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.')
+      return
+    }
+    const tab = { id: 'web-' + crypto.randomUUID(), address: target.href, name: target.hostname }
+    if (await openWeb(tab)) {
+      knownWebTabs.current.add(tab.id)
+      setWebTabs(tabs => [...tabs, tab])
+    }
+  }
   const [unread, setUnread] = React.useState<UnreadCounts>({ whatsapp: 0, teams: 0, zalo: 0 })
   React.useEffect(() => {
     let alive = true,
@@ -502,11 +557,112 @@ function App() {
   const [taskSource, setTaskSource] = React.useState<TaskSourceSnapshot | null>(null)
   const [taskModel, setTaskModel] = React.useState('')
   const [activeService, setActiveService] = React.useState<UiService>('whatsapp')
+  const [apps, setApps] = React.useState<AppId[] | null>(null)
   const operation = React.useRef(0)
   const [fallbackService, setFallbackService] = React.useState<WorkspaceService | null>(null)
-  const [panelWidth, setPanelWidth] = React.useState(400)
+  const [panelWidth, setPanelWidth] = React.useState(360)
   const [panelCollapsed, setPanelCollapsed] = React.useState(false)
+  const [erpFocusMode, setErpFocusMode] = React.useState(false)
+  const panelCollapsedBeforeFocus = React.useRef(false)
+  const openErpRef = React.useRef<(() => Promise<boolean>) | null>(null)
   const [status, setStatus] = React.useState('Đang mở…')
+  const isErpWorkspaceActive = activeArea === 'projects' && erpOpen && !tasksOpen
+  const isQuickChatWorkspaceActive = !tasksOpen && (isErpWorkspaceActive || ['messages', 'email', 'meetings'].includes(activeArea))
+  const focusTogglePending = React.useRef(false)
+  const [quickChat, setQuickChat] = React.useState<AppId | undefined>()
+  const [erpTabsBottom, setErpTabsBottom] = React.useState(() => {
+    try { return localStorage.getItem('linguahub.erp.tabs-position.v1') === 'bottom' } catch { return false }
+  })
+  const [lastQuickChat, setLastQuickChat] = React.useState<AppId | undefined>()
+  const quickChatControls = React.useRef<HTMLDivElement>(null)
+  const quickChatPending = React.useRef(false)
+  React.useEffect(() => {
+    try { localStorage.setItem('linguahub.erp.tabs-position.v1', erpTabsBottom ? 'bottom' : 'top') } catch {}
+    void window.lingua.setWorkspaceErpTabsPosition(erpTabsBottom).catch(() => {})
+  }, [erpTabsBottom])
+  React.useEffect(() => {
+    const sync = (event: Event) => {
+      const service = (event as CustomEvent<AppId | null>).detail
+      setQuickChat(service ?? undefined)
+      if (service) setLastQuickChat(service)
+    }
+    window.addEventListener('linguahub:erp-quick-chat', sync)
+    return () => window.removeEventListener('linguahub:erp-quick-chat', sync)
+  }, [])
+  React.useEffect(() => {
+    if (!isQuickChatWorkspaceActive) {
+      if (quickChat) void window.lingua.setWorkspaceQuickChat(null).catch(() => {})
+      setQuickChat(undefined)
+      setLastQuickChat(undefined)
+      return
+    }
+    if (!quickChat) return
+    const dismiss = () => void window.lingua.setWorkspaceQuickChat(null).catch(console.error)
+    const outside = (event: PointerEvent) => {
+      if (!quickChatControls.current?.contains(event.target as Node)) dismiss()
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss()
+    }
+    document.addEventListener('pointerdown', outside, true)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', outside, true)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [isQuickChatWorkspaceActive, quickChat])
+  React.useEffect(() => {
+    if (!erpFocusMode || isErpWorkspaceActive) return
+    void window.lingua
+      .setWorkspaceFocusMode(false)
+      .catch(error => console.error('Could not leave ERP focus mode', error))
+      .finally(() => {
+        setErpFocusMode(false)
+        setPanelCollapsed(panelCollapsedBeforeFocus.current)
+      })
+  }, [erpFocusMode, isErpWorkspaceActive])
+  const toggleErpFocusMode = React.useCallback(() => {
+    if (focusTogglePending.current) return
+    focusTogglePending.current = true
+    void (async () => {
+      try {
+        if (erpFocusMode) {
+          await window.lingua.setWorkspaceFocusMode(false)
+          setErpFocusMode(false)
+          setPanelCollapsed(panelCollapsedBeforeFocus.current)
+          return
+        }
+        const opened = isErpWorkspaceActive || (await openErpRef.current?.())
+        if (!opened) {
+          setStatus('Chưa mở được tab ERP để chuyển sang chế độ tập trung.')
+          return
+        }
+        panelCollapsedBeforeFocus.current = panelCollapsed
+        await window.lingua.setWorkspaceFocusMode(true)
+        // The focus panel floats above the ERP webview. Keep it collapsed by
+        // default so it does not cover ERP columns and toolbar controls.
+        setPanelCollapsed(false)
+        setErpFocusMode(true)
+      } catch (error) {
+        console.error('Could not switch ERP focus mode', error)
+        setStatus(erpFocusMode ? 'Chưa thoát được chế độ tập trung ERP.' : 'Chưa bật được chế độ tập trung ERP.')
+      } finally {
+        focusTogglePending.current = false
+      }
+    })()
+  }, [erpFocusMode, isErpWorkspaceActive, panelCollapsed])
+  React.useEffect(() => {
+    const toggle = () => toggleErpFocusMode()
+    window.addEventListener('linguahub:erp-focus-toggle', toggle)
+    return () => {
+      window.removeEventListener('linguahub:erp-focus-toggle', toggle)
+    }
+  }, [erpFocusMode, isErpWorkspaceActive, toggleErpFocusMode])
+  React.useEffect(() => {
+    if (isErpWorkspaceActive || !erpFocusMode) return
+    setErpFocusMode(false)
+    setPanelCollapsed(panelCollapsedBeforeFocus.current)
+  }, [erpFocusMode, isErpWorkspaceActive])
   React.useEffect(() => {
     const failed = (event: Event) => setStatus((event as CustomEvent<string>).detail)
     window.addEventListener('linguahub:local-error', failed)
@@ -529,7 +685,12 @@ function App() {
     void window.lingua
       .getPreferences()
       .then(preferences => {
-        setPanelWidth(preferences.panelWidth)
+        const compactLayout = localStorage.getItem('linguahub.office.compact-layout.v1')
+        setPanelWidth(compactLayout ? preferences.panelWidth : 360)
+        if (!compactLayout) {
+          localStorage.setItem('linguahub.office.compact-layout.v1', 'applied')
+          void window.lingua.setWorkspacePanelLayout(360, false, true)
+        }
         setTheme(preferences.theme === 'dark' ? 'dark' : 'light')
         document.documentElement.dataset.theme = preferences.theme
         document.documentElement.lang = 'vi'
@@ -540,7 +701,7 @@ function App() {
   React.useEffect(() => {
     try {
       localStorage.setItem(
-        'linguahub.office.sidebar.v1',
+        'linguahub.office.sidebar.v2',
         sidebarCollapsed ? 'collapsed' : 'expanded',
       )
     } catch {
@@ -559,6 +720,20 @@ function App() {
   React.useEffect(() => {
     window.lingua.setWorkspacePanelLayout(panelWidth, panelCollapsed, false)
   }, [panelWidth, panelCollapsed])
+
+  const toggleQuickChat = React.useCallback((service: AppId) => {
+    if (quickChatPending.current || focusTogglePending.current) return
+    if (!isErpWorkspaceActive && activeService === service) {
+      setStatus('Ứng dụng chat này đang mở toàn màn hình rồi.')
+      return
+    }
+    quickChatPending.current = true
+    void window.lingua.setWorkspaceQuickChat(quickChat === service ? null : service).catch(() => {
+      setStatus('Chưa mở được chat nhanh.')
+    }).finally(() => {
+      quickChatPending.current = false
+    })
+  }, [activeService, isErpWorkspaceActive, quickChat])
 
   const open = React.useCallback(async (service: WorkspaceService, targetArea?: OfficeArea) => {
     const current = ++operation.current
@@ -589,7 +764,7 @@ function App() {
     try {
       await window.lingua
         .setWorkspaceServiceTabsLayout(
-          nextArea === 'messages' && ['whatsapp', 'telegram', 'teams', 'zalo'].includes(service),
+          ['messages', 'email', 'meetings'].includes(nextArea) && Boolean(apps?.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app))),
         )
         .catch(() => {})
       await window.lingua.openWorkspace(service)
@@ -601,16 +776,16 @@ function App() {
       setFallbackService(service)
       setStatus('Không mở được trang trong ứng dụng.')
     }
-  }, [])
+  }, [apps])
 
-  const [apps, setApps] = React.useState<AppId[] | null>(null)
   const [needsSetup, setNeedsSetup] = React.useState(false)
   const openApp = React.useCallback(
     (app: AppId) => open(app, activeArea === 'meetings' ? 'meetings' : undefined),
     [open, activeArea],
   )
-  const openErp = React.useCallback(async () => {
+  const openErp = React.useCallback(async (): Promise<boolean> => {
     setActiveArea('projects')
+    setErpOpen(true)
     setSampleFinderOpen(false)
     setTasksOpen(false)
     setErpRightPanelView('files')
@@ -626,25 +801,29 @@ function App() {
       webTabs.find(value => value.id === savedId) ||
       webTabs.at(-1)
     if (tab) {
-      await openWeb(tab)
-      return
+      if (await openWeb(tab)) return true
+      // A saved tab can become stale after its native WebView was closed. Recover into a fresh
+      // Arito tab instead of leaving F11 on an empty ERP hub.
     }
     if (webTabs.length >= 20) {
       setStatus('Đã mở 20 tab. Anh đóng bớt tab trước nhé.')
-      return
+      return false
     }
     const initial = {
       id: 'web-' + crypto.randomUUID(),
       address: 'https://id.arito.vn/app?id=appdrawer',
       name: 'ERP Arito',
     }
-    if (await openWeb(initial)) {
+    const opened = await openWeb(initial)
+    if (opened) {
       knownWebTabs.current.add(initial.id)
       setWebTabs(values =>
         values.some(value => value.id === initial.id) ? values : [...values, initial],
       )
     }
+    return opened
   }, [activeWeb, openWeb, webTabs])
+  openErpRef.current = openErp
   const showEmptyErp = () => {
     setActiveArea('projects')
     setSampleFinderOpen(false)
@@ -738,7 +917,7 @@ function App() {
     return () => {
       alive = false
     }
-  }, [open])
+  }, [])
   const activeRef = React.useRef(activeService)
   const needsSetupRef = React.useRef(needsSetup)
   needsSetupRef.current = needsSetup
@@ -978,7 +1157,7 @@ function App() {
   const showErpFilesPanel = activeArea === 'projects' && erpOpen && erpRightPanelView === 'files'
 
   return (
-    <div className="office-app" lang="vi">
+    <div className={erpFocusMode ? 'office-app erp-focus-mode' : 'office-app'} lang="vi">
       <OfficeSidebar
         active={activeArea}
         collapsed={sidebarCollapsed}
@@ -986,7 +1165,7 @@ function App() {
         onToggle={() => setSidebarCollapsed(value => !value)}
         onManageWorkspaces={openWorkspaceManagement}
       />
-      <div className="office-main">
+      <div className={erpTabsBottom ? 'office-main erp-tabs-bottom' : 'office-main'}>
         {workspaceForm && (
           <WorkspaceForm
             kind={workspaceForm}
@@ -1029,6 +1208,20 @@ function App() {
           </div>
           <OfficeGlobalSearch onNavigate={area => void navigateArea(area)} />
           <div className="office-topbar-actions">
+            {isErpWorkspaceActive && (
+              <button
+                type="button"
+                className="office-icon-button"
+                title={erpFocusMode ? 'Thoát chế độ tập trung ERP (F11)' : 'Tập trung ERP (F11)'}
+                aria-label={erpFocusMode ? 'Thoát chế độ tập trung ERP' : 'Tập trung ERP'}
+                onClick={toggleErpFocusMode}
+              >
+                {erpFocusMode ? <Minimize2 size={18} aria-hidden="true" /> : <Maximize2 size={18} aria-hidden="true" />}
+              </button>
+            )}
+            <button type="button" className="erp-subtab-icon" title="Khóa LinguaHub" aria-label="Khóa LinguaHub" onClick={onLock}>
+              <LockKeyhole size={17} aria-hidden="true" />
+            </button>
             <OfficeNotifications
               counts={unread}
               onOpen={service => void open(service, 'messages')}
@@ -1110,12 +1303,26 @@ function App() {
           !needsSetup &&
           apps &&
           apps.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app)) && (
-            <OfficeServiceSwitcher
-              enabled={apps}
-              active={activeService}
-              unread={unread}
-              onSelect={service => void open(service, 'messages')}
-            />
+            <div className="office-messages-switcher-row" ref={quickChatControls}>
+              <OfficeServiceSwitcher
+                enabled={apps}
+                active={activeService}
+                unread={unread}
+                onSelect={service => void open(service, 'messages')}
+              />
+              <div className="office-quick-chat-group">
+                <span>Chat nhanh</span>
+                <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread} onSelect={toggleQuickChat} />
+              </div>
+            </div>
+          )}
+
+        {['email', 'meetings'].includes(activeArea) && !tasksOpen && !needsSetup && apps &&
+          apps.some(app => ['whatsapp', 'telegram', 'teams', 'zalo'].includes(app)) && (
+            <div className="office-quick-chat-bar" ref={quickChatControls}>
+              <span>Chat nhanh</span>
+              <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread} onSelect={toggleQuickChat} />
+            </div>
           )}
 
         {activeArea === 'projects' && erpOpen && !tasksOpen && (
@@ -1156,6 +1363,27 @@ function App() {
             >
               ＋ <span>Tab mới</span>
             </button>
+            <form className="erp-address-form" role="search" onSubmit={event => void submitErpAddress(event)}>
+              <input
+                ref={erpAddressInput}
+                type="text"
+                inputMode="url"
+                aria-label="Địa chỉ trang ERP"
+                title="Nhập địa chỉ HTTPS rồi nhấn Enter"
+                placeholder="Nhập địa chỉ trang ERP…"
+                value={erpAddress}
+                onChange={event => setErpAddress(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Escape') {
+                    setErpAddress(webTabs.find(tab => tab.id === activeWeb)?.address || '')
+                    event.currentTarget.blur()
+                  }
+                }}
+              />
+              <button type="submit" aria-label="Đi đến địa chỉ ERP" title="Đi đến địa chỉ ERP">
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
+            </form>
             {!webTabs.length && !sampleFinderOpen && (
               <span className="erp-subtabs-hint">Mở Arito hoặc thêm một địa chỉ web ERP.</span>
             )}
@@ -1167,6 +1395,57 @@ function App() {
             >
               ⌕ Tra Sample ID
             </button>
+            <div className="erp-subtabs-actions">
+              <button type="button" className="erp-subtab-icon" title={erpTabsBottom ? 'Đưa thanh tab ERP lên trên' : 'Đưa thanh tab ERP xuống dưới'} aria-label={erpTabsBottom ? 'Đưa thanh tab ERP lên trên' : 'Đưa thanh tab ERP xuống dưới'} onClick={() => setErpTabsBottom(value => !value)}>
+                {erpTabsBottom ? <ArrowUpToLine size={15} aria-hidden="true" /> : <ArrowDownToLine size={15} aria-hidden="true" />}
+              </button>
+              {erpFocusMode && <button type="button" className="erp-subtab-icon" title="Khóa LinguaHub" aria-label="Khóa LinguaHub" onClick={onLock}>
+                <LockKeyhole size={15} aria-hidden="true" />
+              </button>}
+              {apps && (
+                <div className="erp-quick-chat-controls" ref={quickChatControls}>
+                  <OfficeServiceSwitcher compact enabled={apps} active={quickChat} unread={unread}
+                    onSelect={toggleQuickChat}
+                  />
+                  {lastQuickChat && apps.includes(lastQuickChat) && <button type="button" className="erp-subtab-tool"
+                    title="Mở ứng dụng nhắn tin với công cụ dịch"
+                    onClick={() => {
+                    if (focusTogglePending.current) return
+                    focusTogglePending.current = true
+                    void window.lingua.setWorkspaceFocusMode(false).then(() => {
+                      setErpFocusMode(false)
+                      setPanelCollapsed(panelCollapsedBeforeFocus.current)
+                      return open(lastQuickChat, 'messages')
+                    }).catch(() => {
+                      setStatus('Chưa mở được ứng dụng nhắn tin.')
+                    }).finally(() => {
+                      focusTogglePending.current = false
+                    })
+                    }}
+                  >Mở đầy đủ</button>}
+                </div>
+              )}
+              <button
+                type="button"
+                className="erp-subtab-icon erp-subtab-action"
+                aria-label={panelCollapsed ? 'Mở panel phải' : 'Thu gọn panel phải'}
+                title={panelCollapsed ? 'Mở panel phải' : 'Thu gọn panel phải'}
+                onClick={() => setPanelCollapsed(value => !value)}
+              >
+                {panelCollapsed ? <PanelRightOpen size={15} aria-hidden="true" /> : <PanelRightClose size={15} aria-hidden="true" />}
+                <span>{panelCollapsed ? 'Mở panel' : 'Thu gọn panel'}</span>
+              </button>
+              <button
+                type="button"
+                className={erpFocusMode ? 'erp-subtab-icon erp-subtab-action active' : 'erp-subtab-icon erp-subtab-action'}
+                aria-label={erpFocusMode ? 'Thu ERP (F11)' : 'Bung ERP (F11)'}
+                title={erpFocusMode ? 'Thu ERP (F11)' : 'Bung ERP (F11)'}
+                onClick={toggleErpFocusMode}
+              >
+                {erpFocusMode ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+                <span>{erpFocusMode ? 'Thu ERP' : 'Bung ERP'}</span>
+              </button>
+            </div>
           </nav>
         )}
 
@@ -1519,20 +1798,20 @@ function App() {
 
           {!tasksOpen && !(activeArea === 'documents' && sampleFinderOpen) && (
             <aside
-              className={panelCollapsed ? 'panel panel-collapsed' : 'panel'}
-              style={{ width: panelCollapsed ? 56 : panelWidth }}
+              className="panel"
+              style={{ width: panelWidth, display: panelCollapsed ? 'none' : undefined }}
               aria-label={
                 showErpFilesPanel ? 'Xử lý tệp ERP theo Sample ID' : 'Trợ lý AI theo ngữ cảnh'
               }
             >
-              {panelCollapsed && (
+              {erpFocusMode && !panelCollapsed && (
                 <button
-                  className="expand-panel"
-                  title="Mở trợ lý AI / ERP"
-                  aria-label="Mở trợ lý AI"
-                  onClick={() => setPanelCollapsed(false)}
+                  className="focus-panel-toggle"
+                  title="Ẩn panel phải (F11 để thoát chế độ tập trung)"
+                  aria-label="Ẩn panel phải"
+                  onClick={() => setPanelCollapsed(true)}
                 >
-                  ›
+                  <PanelRightClose size={17} aria-hidden="true" />
                 </button>
               )}
               <div
@@ -1572,9 +1851,99 @@ function App() {
   )
 }
 
+type AppLockState = { locked: boolean; configured: boolean }
+
+function LockedWorkspace() {
+  const [lock, setLock] = React.useState<AppLockState | null>(null)
+  const [started, setStarted] = React.useState(false)
+  const [pin, setPin] = React.useState('')
+  const [confirmation, setConfirmation] = React.useState('')
+  const [error, setError] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [biometricBusy, setBiometricBusy] = React.useState(false)
+
+  const showState = (state: AppLockState) => {
+    setLock(state)
+    if (!state.locked) setStarted(true)
+  }
+
+  React.useEffect(() => {
+    void invoke<AppLockState>('app_lock_state').then(showState).catch(error => setError(String(error)))
+    let unlisten: (() => void) | undefined
+    void listen('app-lock-changed', () => {
+      void invoke<AppLockState>('app_lock_state').then(showState).catch(error => setError(String(error)))
+    }).then(dispose => { unlisten = dispose })
+    return () => unlisten?.()
+  }, [])
+
+  const lockApp = () => {
+    setError('')
+    void invoke<AppLockState>('app_lock').then(showState).catch(error => setError(String(error)))
+  }
+
+  const unlockWithBiometrics = async () => {
+    if (biometricBusy || busy) return
+    setError('')
+    setBiometricBusy(true)
+    try {
+      await invoke('app_unlock_biometric')
+      showState({ locked: false, configured: true })
+    } catch (error) {
+      setError(String(error))
+    } finally {
+      setBiometricBusy(false)
+    }
+  }
+
+  return <>
+    {started && <div style={{ display: lock?.locked ? 'none' : 'contents' }}>
+      <App onLock={lockApp} />
+      <DialogHost />
+      {!lock?.locked && error && <div className="app-lock-error" role="alert">{error}</div>}
+    </div>}
+    {(!lock || lock.locked) && <main className="app-lock-screen">
+      {lock ? <form className="app-lock-card" onSubmit={async event => {
+        event.preventDefault()
+        if (busy) return
+        if (!lock.configured && pin !== confirmation) {
+          setError('Hai mã PIN chưa trùng nhau.')
+          return
+        }
+        setError('')
+        setBusy(true)
+        try {
+          await invoke('app_unlock', { pin })
+          showState({ locked: false, configured: true })
+        } catch (error) {
+          setError(String(error))
+        } finally {
+          setPin('')
+          setConfirmation('')
+          setBusy(false)
+        }
+      }}>
+        <LockKeyhole size={28} aria-hidden="true" />
+        <h1>{lock.configured ? 'LinguaHub đang khóa' : 'Tạo PIN khóa LinguaHub'}</h1>
+        <p>{lock.configured ? 'Mở khóa bằng Windows Hello hoặc nhập PIN.' : 'Dùng PIN từ 6 đến 12 chữ số. App sẽ yêu cầu PIN khi khởi động lại.'}</p>
+        {lock.configured && <button className="app-lock-biometric" type="button" disabled={busy || biometricBusy} onClick={() => void unlockWithBiometrics()}>
+          <Fingerprint size={20} aria-hidden="true" /> {biometricBusy ? 'Đang xác thực với Windows Hello…' : 'Mở khóa bằng vân tay / Windows Hello'}
+        </button>}
+        <label>Mã PIN<input autoFocus type="password" inputMode="numeric" autoComplete={lock.configured ? 'current-password' : 'new-password'} pattern="[0-9]{6,12}" maxLength={12} value={pin} onChange={event => setPin(event.target.value)} required /></label>
+        {!lock.configured && <label>Xác nhận PIN<input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,12}" maxLength={12} value={confirmation} onChange={event => setConfirmation(event.target.value)} required /></label>}
+        {error && <p role="alert">{error}</p>}
+        <button className="primary-button" disabled={busy || biometricBusy}>{lock.configured ? 'Mở khóa bằng PIN' : 'Lưu PIN và tiếp tục'}</button>
+      </form> : <p role={error ? 'alert' : 'status'}>{error || 'Đang kiểm tra khóa LinguaHub…'}</p>}
+    </main>}
+  </>
+}
+
+const isErpFloatingPanel = Boolean(
+  (window as Window & { __LINGUA_HUB_ERP_PANEL__?: boolean }).__LINGUA_HUB_ERP_PANEL__,
+)
 createRoot(document.getElementById('root')!).render(
-  <>
-    <App />
-    <DialogHost />
-  </>,
+  isErpFloatingPanel ? (
+    <ErpFloatingPanel />
+  ) : (
+    <LockedWorkspace />
+  ),
 )

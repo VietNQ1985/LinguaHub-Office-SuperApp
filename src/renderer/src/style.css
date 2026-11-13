@@ -34,6 +34,14 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+.app-lock-screen { height:100%; display:grid; place-items:center; padding:20px; background:var(--bg); color:var(--text); }
+.app-lock-card { display:grid; gap:12px; width:min(100%, 420px); padding:24px; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
+.app-lock-card h1,.app-lock-card p { margin:0; }
+.app-lock-card label { display:grid; gap:5px; }
+.app-lock-card input { padding:8px; border:1px solid var(--border); border-radius:6px; }
+.app-lock-biometric { display:flex; align-items:center; justify-content:center; gap:8px; min-height:42px; border:1px solid var(--border); border-radius:8px; background:var(--soft); color:var(--text); font-weight:600; }
+.app-lock-biometric:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+.app-lock-error { position:fixed; top:48px; right:12px; z-index:20; padding:8px; background:var(--surface); color:var(--text); }
 button, select, textarea, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { opacity: .55; cursor: not-allowed; }
@@ -73,10 +81,12 @@ h2, h3, h4 { color: var(--text); }
 .workspace-tab:hover { color: var(--text); background: var(--soft); }
 .workspace-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--soft); }
 .erp-subtabs {
-  display: flex; flex: 0 0 40px; min-width: 0; height: 40px; align-items: stretch; gap: 5px;
+  display: flex; flex: 0 0 32px; min-width: 0; height: 32px; align-items: stretch; gap: 3px;
   padding: 0 14px 0 20px; overflow-x: auto; white-space: nowrap; scrollbar-width: thin;
   background: var(--soft); border-bottom: 1px solid var(--border); z-index: 1;
 }
+.office-main.erp-tabs-bottom .workspace-row { order: 1; }
+.office-main.erp-tabs-bottom .erp-subtabs { order: 2; border-top: 1px solid var(--border); border-bottom: 0; }
 .erp-subtab { display: inline-flex; flex: 0 0 auto; align-items: center; min-width: 0; max-width: 230px; border-bottom: 2px solid transparent; }
 .erp-subtab.active { border-bottom-color: var(--accent); }
 .erp-subtab-select, .erp-subtab-close, .erp-add-tab {
@@ -87,9 +97,18 @@ h2, h3, h4 { color: var(--text); }
 .erp-subtab-select:hover, .erp-subtab-close:hover, .erp-add-tab:hover { color: var(--text); background: var(--surface); }
 .erp-subtab-close { flex: 0 0 26px; width: 26px; font-size: 18px; line-height: 1; }
 .erp-add-tab { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 10px; font-size: 12px; }
+.erp-address-form { display:flex; flex:1 1 220px; min-width:140px; max-width:520px; height:28px; align-items:center; gap:2px; margin:0 4px; padding:0 3px 0 9px; border:1px solid var(--border); border-radius:7px; background:var(--surface); }
+.erp-address-form:focus-within { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent); }
+.erp-address-form input { flex:1 1 auto; width:100%; min-width:0; height:24px; padding:0 4px; border:0; outline:0; color:var(--text); background:transparent; font-size:12px; }
+.erp-address-form input:focus-visible { outline:0; }
+.erp-address-form button { display:grid; flex:0 0 24px; width:24px; height:24px; place-items:center; border:0; border-radius:5px; color:var(--accent); background:transparent; }
+.erp-address-form button:hover { background:var(--soft); }
 .erp-subtab-tool { flex: 0 0 auto; align-self: center; height: 30px; margin-left: 5px; padding: 0 11px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); background: var(--surface); font-size: 12px; }
 .erp-subtab-tool:hover, .erp-subtab-tool.active { border-color: var(--accent); color: var(--accent); }
 .erp-subtabs-hint { align-self: center; color: var(--muted); font-size: 12px; }
+.erp-subtabs-actions { position: sticky; right: 0; z-index: 2; display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; padding: 0 0 0 8px; background: var(--soft); }
+.erp-subtab-icon { display: inline-flex; flex: 0 0 auto; min-width: 30px; height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--surface); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.erp-subtab-icon:hover, .erp-subtab-icon.active { border-color: var(--border); color: var(--accent); background: var(--surface); }
 .erp-empty-state { display: grid; width: 100%; height: 100%; place-items: center; padding: 24px; background: var(--bg); }
 .erp-empty-state > div { max-width: 440px; padding: 34px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: center; box-shadow: 0 12px 36px rgb(15 23 42 / 7%); }
 .erp-empty-state > div > span { color: var(--accent); font-size: 30px; }
@@ -194,6 +213,43 @@ h2, h3, h4 { color: var(--text); }
   position: absolute; top: 8px; left: 7px; z-index: 2; width: 40px; height: 42px;
   border: 0; border-radius: 8px; background: var(--soft); color: var(--text); font-size: 25px;
 }
+.office-app.erp-focus-mode > .office-sidebar,
+.office-app.erp-focus-mode .office-topbar { display: none !important; }
+.office-app.erp-focus-mode .office-main { flex: 1 1 100%; width: 100%; min-width: 0; }
+.office-app.erp-focus-mode .erp-subtabs { flex: 0 0 32px; min-height: 32px; }
+.office-app.erp-focus-mode .workspace-row { position: relative; }
+.office-app.erp-focus-mode .workspace { width: 100%; flex: 1 1 100%; }
+.office-app.erp-focus-mode .panel-resizer { display: none; }
+.office-app.erp-focus-mode .workspace-row > .panel,
+.office-app.erp-focus-mode .workspace-row > .panel-resizer { display: none !important; }
+.office-app.erp-focus-mode .panel {
+  position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; height: 100%;
+  border-left: 1px solid var(--border); box-shadow: -12px 0 28px rgb(15 23 42 / 16%);
+}
+.office-app.erp-focus-mode .panel-collapsed {
+  width: 48px !important; padding: 0; border: 0; background: transparent; box-shadow: none;
+}
+.office-app.erp-focus-mode .expand-panel {
+  top: 12px; left: auto; right: 8px; width: 38px; height: 38px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--accent);
+  box-shadow: 0 3px 12px rgb(15 23 42 / 14%); font-size: 18px;
+}
+.focus-panel-toggle {
+  position: absolute; z-index: 5; top: 8px; right: 8px; width: 32px; height: 32px;
+  display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); background: var(--surface); box-shadow: 0 2px 8px rgb(15 23 42 / 10%);
+}
+.focus-panel-toggle:hover { color: var(--accent); }
+.erp-floating-panel-root { display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); }
+.erp-floating-panel-collapsed { padding:4px; background:transparent; }
+.erp-floating-panel-handle { display:grid; place-items:center; width:36px; height:36px; margin-left:auto; border:1px solid var(--border); border-radius:10px; color:var(--accent); background:var(--surface); box-shadow:0 3px 12px rgb(15 23 42 / 18%); }
+.erp-floating-panel-collapsed .erp-floating-panel-handle { display:flex; flex-direction:column; gap:5px; width:48px; height:82px; margin:auto 0; padding:7px 2px; border-color:var(--accent); border-radius:12px; color:var(--accent); background:var(--surface); font-size:10px; font-weight:650; line-height:1.1; white-space:normal; }
+.erp-floating-panel-toolbar { display:flex; flex:0 0 42px; align-items:center; gap:5px; padding:5px 7px; border-bottom:1px solid var(--border); background:var(--surface); }
+.erp-floating-panel-toolbar button { display:flex; align-items:center; gap:5px; height:30px; padding:0 9px; border:1px solid transparent; border-radius:7px; color:var(--muted); background:transparent; font-size:12px; }
+.erp-floating-panel-toolbar button.active { border-color:var(--border); color:var(--accent); background:var(--soft); }
+.erp-floating-panel-toolbar .erp-floating-panel-close { width:30px; justify-content:center; margin-left:auto; padding:0; }
+.erp-floating-panel-content { flex:1 1 auto; min-width:0; min-height:0; overflow:auto; background:var(--bg); }
+.erp-floating-panel-content > .sample-file-panel { min-height:100%; }
 .assistant-shell { min-width: 0; min-height: 100%; display: flex; flex-direction: column; }
 .assistant-heading { padding: 22px 22px 12px; }
 .assistant-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.4px; font-weight: 700; }
@@ -515,6 +571,16 @@ h2, h3, h4 { color: var(--text); }
 .reply-composer { padding: 14px; }
 .reply-composer > label { margin-top: 12px; }
 .reply-composer textarea { min-height: 60px; }
+.email-reply-card { display: grid; gap: 10px; margin: 2px 0 14px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.email-reply-heading { display: flex; align-items: center; gap: 10px; }
+.email-reply-heading > span { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 11px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 18px; }
+.email-reply-heading h3 { margin: 0; font-size: 15px; }
+.email-reply-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.email-reply-generate { width: 100%; }
+.email-reply-card > label { display: block; margin: 2px 0 -4px; font-size: 12px; font-weight: 650; }
+.reply-composer textarea.email-reply-draft { min-height: 150px; background: var(--surface); }
+.email-reply-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.email-reply-actions small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
 .composer-voice-row { margin-top: 8px; }
 .composer-suggest { margin-top: 6px; }
 .composer-more { margin-top: 8px; }
@@ -649,12 +715,12 @@ span.ai-trust-pill { cursor: default; }
 .settings-erp-root-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* ERP File Processing & Re-learning Panel */
-.erp-panel-header { display: grid; gap: 8px; margin-bottom: 4px; }
+.erp-panel-header { display: grid; gap: 4px; margin-bottom: 0; }
 .erp-panel-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .erp-panel-title-row h2 { margin: 0; font-size: 16px; }
 .erp-panel-top-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .erp-panel-top-actions button { padding: 6px 10px; font-size: 12px; border-radius: 9px; }
-.erp-panel-header .ai-trust-bar { padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.erp-panel-header .ai-trust-bar { padding: 3px 0; border: 0; background: transparent; }
 
 .sample-panel-search-card { display: grid; gap: 8px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
 .sample-panel-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
@@ -699,7 +765,7 @@ span.ai-trust-pill { cursor: default; }
 }
 
 /* Lưu PDF tự động */
-.pdf-export-card { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
+.pdf-export-card { display: grid; gap: 8px; margin-top: 8px; padding: 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); }
 .pdf-export-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .pdf-export-head h4 { margin: 0 0 4px; font-size: 14px; }
 .pdf-export-head p { margin: 0; }
@@ -737,6 +803,18 @@ span.ai-trust-pill { cursor: default; }
 .erp-panel-nav-tab { display: flex; min-width: 0; min-height: 38px; align-items: center; justify-content: center; gap: 5px; padding: 6px 7px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); background: var(--surface); font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .erp-panel-nav-tab > span { flex: 0 0 auto; }
 .erp-panel-nav-tab.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: inset 0 -2px 0 var(--accent); }
+.sample-file-panel .erp-panel-nav-tab { min-height: 32px; padding: 4px; }
+.sample-file-panel .pdf-source-box { padding: 8px; border-radius: 8px; }
+.sample-file-panel .pdf-erp-att-item { padding: 8px; }
+.sample-file-panel .pdf-erp-att-item strong { font-size: 12px; line-height: 1.4; }
+.sample-file-panel .pdf-source-list { margin-block: 6px; }
+.sample-file-panel { padding: 8px; }
+.sample-file-panel .pdf-export-card { padding: 0; border: 0; background: transparent; }
+.sample-file-panel .pdf-source-box { border-style: solid; background: var(--surface); }
+.sample-file-panel .erp-panel-title-row h2 { font-size: 13px; }
+.sample-file-panel .ai-trust-pill { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.sample-file-panel .erp-panel-header .ai-trust-bar { flex-wrap: nowrap; gap: 4px; }
+.sample-file-panel .erp-panel-nav { gap: 3px; }
 .erp-tools-workbench > .erp-tool-tabs { position: sticky; top: 49px; z-index: 7; margin-bottom: 0; background: var(--bg); }
 .erp-panel-settings { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .erp-panel-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -772,3 +850,7 @@ span.ai-trust-pill { cursor: default; }
   .erp-panel-nav { gap: 3px; }
   .erp-panel-nav-tab { gap: 3px; padding-inline: 4px; font-size: 10.5px; }
 }
+
+.erp-floating-panel-root { position:relative; padding-left:6px; }
+.erp-focus-resizer { position:absolute; left:0; top:0; bottom:0; width:6px; cursor:col-resize; touch-action:none; background:var(--border); z-index:10; }
+.erp-focus-resizer:hover,.erp-focus-resizer:focus-visible { background:var(--accent); }

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { UnreadCounts } from '../../shared/workspace-unread'
+import type { PdfExportResult } from './pdfExport'
 
 // window.lingua for the Tauri build: the same API the Electron preload exposed, implemented with
 // Tauri commands (src-tauri/src/commands.rs) and events. Components keep calling window.lingua.*.
@@ -22,6 +23,9 @@ function subscribe<T>(event: string, handler: (payload: T) => void) {
 
 const shortcutListeners = new Set<(action: string) => void>()
 for(const event of ['web-tab-created','web-tab-updated','web-tab-navigated'])void listen(event,message=>window.dispatchEvent(new CustomEvent('linguahub:'+event,{detail:message.payload})))
+void listen('erp-focus-toggle', () => window.dispatchEvent(new Event('linguahub:erp-focus-toggle')))
+void listen('erp-quick-chat', message => window.dispatchEvent(new CustomEvent('linguahub:erp-quick-chat', { detail: message.payload })))
+void listen('erp-panel-state', message => window.dispatchEvent(new CustomEvent('linguahub:erp-panel-state', {detail: message.payload})))
 void listen<{ tabId: string; origin: string; username: string; password: string }>(
   'erp-credential-proposal',
   message =>
@@ -65,6 +69,7 @@ window.lingua = {
   createPdfSigningCertificate: () => call('pdf_export_create_signing_certificate'),
   listPdfExportSource: () => call('pdf_export_list_source'),
   convertToPdf: (path: string, fileName: string) => call('pdf_export_convert', {path, fileName}),
+  mergePdfOutputs: (paths: string[], fileName: string) => call<PdfExportResult>('pdf_export_merge', {paths, fileName}),
   scanErpPageAttachments: (tabId: string) => call('pdf_export_scan_erp_page', { tabId }),
   convertErpAttachmentToPdf: (
     tabId: string,
@@ -94,7 +99,11 @@ window.lingua = {
     return () => { shortcutListeners.delete(callback) }
   },
   reloadWorkspace: () => call('workspace_reload'),
-  setWorkspacePanelLayout: (panelWidth, collapsed, persist = false) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist }).catch(() => {}) },
+  setWorkspacePanelLayout: (panelWidth, collapsed, persist = false, pinned) => { void call('workspace_panel_layout', { panelWidth, collapsed, persist, pinned }).catch(() => {}) },
+  setWorkspaceFocusMode: enabled => call('workspace_focus_mode', { enabled }),
+  setWorkspaceQuickChat: service => call('workspace_quick_chat', { service }),
+  setWorkspaceErpTabsPosition: bottom => call('workspace_erp_tabs_position', { bottom }),
+  getWorkspaceFocusPanelState: () => call('workspace_focus_panel_state'),
   setWorkspaceSidebarLayout: collapsed => { void call('workspace_sidebar_layout', { collapsed }).catch(() => {}) },
   setWorkspaceServiceTabsLayout: visible => call('workspace_service_tabs_layout', { visible }),
   setMasking: (enabled: boolean) => call('privacy_masking', { enabled }),
