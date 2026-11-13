@@ -99,7 +99,12 @@ pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
             inner.unlock_after = Some(std::time::Instant::now() + Duration::from_secs(3));
         }
 
-        let verified = windows_hello_verify(hwnd, "Xác thực để mở khóa LinguaHub").await?;
+        let hwnd = hwnd.0 as isize;
+        let message = "Xác thực để mở khóa LinguaHub".to_owned();
+        let verified =
+            tauri::async_runtime::spawn_blocking(move || windows_hello_verify(hwnd, &message))
+                .await
+                .map_err(fail)??;
         if !verified {
             return Err("Windows Hello chưa xác thực thành công. Anh có thể dùng PIN.".into());
         }
@@ -119,11 +124,27 @@ pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
 }
 
 #[cfg(windows)]
-async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &str) -> Res<bool> {
+fn windows_hello_verify(hwnd: isize, message: &str) -> Res<bool> {
     use windows::core::HSTRING;
     use windows::Security::Credentials::UI::UserConsentVerificationResult;
-    use windows::Win32::System::WinRT::{IUserConsentVerifierInterop, RoGetActivationFactory};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::WinRT::{
+        IUserConsentVerifierInterop, RoGetActivationFactory, RoInitialize, RoUninitialize,
+        RO_INIT_MULTITHREADED,
+    };
+    use windows_future::AsyncStatus;
     use windows_future::IAsyncOperation;
+
+    struct WinRtApartment;
+    impl Drop for WinRtApartment {
+        fn drop(&mut self) {
+            unsafe { RoUninitialize() };
+        }
+    }
+
+    unsafe { RoInitialize(RO_INIT_MULTITHREADED) }
+        .map_err(|error| format!("Không khởi tạo được Windows Runtime: {error}"))?;
+    let _apartment = WinRtApartment;
 
     let factory: IUserConsentVerifierInterop = unsafe {
         RoGetActivationFactory(&HSTRING::from(
@@ -131,12 +152,25 @@ async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &
         ))
     }
     .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
-    let operation: IAsyncOperation<UserConsentVerificationResult> =
-        unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
-            .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
-    let result: UserConsentVerificationResult = operation
-        .await
-        .map_err(|error| format!("Xác thực Windows Hello lỗi: {error}"))?;
+    let operation: IAsyncOperation<UserConsentVerificationResult> = unsafe {
+        factory.RequestVerificationForWindowAsync(HWND(hwnd as *mut _), &HSTRING::from(message))
+    }
+    .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
+    let result = loop {
+        match operation
+            .Status()
+            .map_err(|error| format!("Không đọc được trạng thái Windows Hello: {error}"))?
+        {
+            AsyncStatus::Started => std::thread::sleep(Duration::from_millis(100)),
+            AsyncStatus::Completed => break operation.GetResults().map_err(fail)?,
+            AsyncStatus::Canceled => return Ok(false),
+            AsyncStatus::Error => {
+                let error = operation.ErrorCode().map_err(fail)?;
+                return Err(format!("Windows Hello báo lỗi: {error}"));
+            }
+            _ => return Err("Windows Hello trả về trạng thái không xác định.".into()),
+        }
+    };
     if result == UserConsentVerificationResult::Verified {
         Ok(true)
     } else {
