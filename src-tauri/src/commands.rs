@@ -80,22 +80,24 @@ pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
         return Err("Untrusted sender".into());
     }
     let state = app.state::<AppState>();
-    if !state.lock().app_locked || state.store.app_lock_verifier().is_none() {
+    let app_locked = { state.lock().app_locked };
+    if !app_locked || state.store.app_lock_verifier().is_none() {
         return Err("LinguaHub chưa được thiết lập khóa.".into());
     }
     #[cfg(windows)]
     {
         let window = app.get_window("main").ok_or("Chưa có cửa sổ.")?;
         let hwnd = window.hwnd().map_err(fail)?;
-        let mut inner = state.lock();
-        if inner
-            .unlock_after
-            .is_some_and(|until| until > std::time::Instant::now())
         {
-            return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+            let mut inner = state.lock();
+            if inner
+                .unlock_after
+                .is_some_and(|until| until > std::time::Instant::now())
+            {
+                return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+            }
+            inner.unlock_after = Some(std::time::Instant::now() + Duration::from_secs(3));
         }
-        inner.unlock_after = Some(std::time::Instant::now() + Duration::from_secs(3));
-        drop(inner);
 
         let verified = windows_hello_verify(hwnd, "Xác thực để mở khóa LinguaHub").await?;
         if !verified {
@@ -119,7 +121,8 @@ pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
 #[cfg(windows)]
 async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &str) -> Res<bool> {
     use windows::core::HSTRING;
-    use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
+    use windows::Foundation::IAsyncOperation;
+    use windows::Security::Credentials::UI::UserConsentVerificationResult;
     use windows::Win32::System::WinRT::{IUserConsentVerifierInterop, RoGetActivationFactory};
 
     let factory: IUserConsentVerifierInterop = unsafe {
@@ -128,7 +131,7 @@ async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &
         ))
     }
     .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
-    let operation =
+    let operation: IAsyncOperation<UserConsentVerificationResult> =
         unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
             .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
     let result = operation
