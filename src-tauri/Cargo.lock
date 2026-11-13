@@ -2806,6 +2806,7 @@ dependencies = [
  "whisper-rs",
  "windows 0.62.2",
  "windows-core 0.62.2",
+ "windows-future",
  "zeroize",
 ]
 

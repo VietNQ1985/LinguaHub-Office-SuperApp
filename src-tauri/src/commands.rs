@@ -123,6 +123,7 @@ async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &
     use windows::core::HSTRING;
     use windows::Security::Credentials::UI::UserConsentVerificationResult;
     use windows::Win32::System::WinRT::{IUserConsentVerifierInterop, RoGetActivationFactory};
+    use windows_future::IAsyncOperation;
 
     let factory: IUserConsentVerifierInterop = unsafe {
         RoGetActivationFactory(&HSTRING::from(
@@ -130,7 +131,7 @@ async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &
         ))
     }
     .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
-    let operation =
+    let operation: IAsyncOperation<UserConsentVerificationResult> =
         unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
             .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
     let result: UserConsentVerificationResult = operation

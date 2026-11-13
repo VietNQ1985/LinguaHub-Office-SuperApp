@@ -67,6 +67,7 @@ windows = { version = "0.62", features = [
   "Win32_UI_Input_KeyboardAndMouse",
 ] }
 windows-core = "0.62"
+windows-future = "0.3.2"
 oxidize-pdf = { version = "5.5.7", default-features = false, features = ["compression", "signatures"] }
 lopdf = { version = "0.38", default-features = false }
 
