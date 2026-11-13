@@ -121,7 +121,6 @@ pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
 #[cfg(windows)]
 async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &str) -> Res<bool> {
     use windows::core::HSTRING;
-    use windows::Foundation::IAsyncOperation;
     use windows::Security::Credentials::UI::UserConsentVerificationResult;
     use windows::Win32::System::WinRT::{IUserConsentVerifierInterop, RoGetActivationFactory};
 
@@ -131,10 +130,10 @@ async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &
         ))
     }
     .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
-    let operation: IAsyncOperation<UserConsentVerificationResult> =
+    let operation =
         unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
             .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
-    let result = operation
+    let result: UserConsentVerificationResult = operation
         .await
         .map_err(|error| format!("Xác thực Windows Hello lỗi: {error}"))?;
     if result == UserConsentVerificationResult::Verified {
