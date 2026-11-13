@@ -242,6 +242,8 @@ pub fn run() {
             set_erp_focus_shortcut(&handle, true);
             let size = window.inner_size()?;
             let scale = window.scale_factor()?;
+            let idle_activity =
+                std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
             let ui = WebviewBuilder::new("ui", WebviewUrl::App("index.html".into()))
                 .additional_browser_args(workspace::BROWSER_ARGS)
                 .auto_resize()
@@ -260,11 +262,15 @@ pub fn run() {
             )?;
             let _ = wv::install_permissions(&ui, ui_permissions(&handle));
             let resize_handle = handle.clone();
+            let focus_activity = idle_activity.clone();
             window.on_window_event(move |event| match event {
                 WindowEvent::Resized(_)
                 | WindowEvent::Moved(_)
                 | WindowEvent::ScaleFactorChanged { .. } => workspace::layout(&resize_handle),
                 WindowEvent::Focused(focused) => {
+                    if let Ok(mut last_activity) = focus_activity.lock() {
+                        *last_activity = std::time::Instant::now();
+                    }
                     if *focused {
                         set_erp_focus_shortcut(&resize_handle, true);
                     } else {
@@ -294,6 +300,8 @@ pub fn run() {
             stt::start_idle_unloader(handle.clone());
             task_reminders::start(handle.clone());
             workspace::start_polling(handle);
+            #[cfg(windows)]
+            start_idle_app_lock(app.handle().clone(), idle_activity);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -305,6 +313,7 @@ pub fn run() {
             commands::app_lock_state,
             commands::app_lock,
             commands::app_unlock,
+            commands::app_unlock_biometric,
             commands::window_always_on_top,
             commands::workspace_panel_layout,
             commands::workspace_focus_mode,
@@ -451,4 +460,65 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(windows)]
+fn start_idle_app_lock(
+    app: AppHandle,
+    last_activity: std::sync::Arc<std::sync::Mutex<std::time::Instant>>,
+) {
+    use windows::Win32::System::SystemInformation::GetTickCount;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let Some(window) = app.get_window("main") else {
+                continue;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            if state.lock().app_locked || state.store.app_lock_verifier().is_none() {
+                continue;
+            }
+            if window.is_focused().unwrap_or(false) {
+                let mut info = LASTINPUTINFO {
+                    cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                    dwTime: 0,
+                };
+                if unsafe { GetLastInputInfo(&mut info) }.as_bool() {
+                    let system_idle_ms = unsafe { GetTickCount() }.wrapping_sub(info.dwTime);
+                    if system_idle_ms < 8_000 {
+                        if let Ok(mut last) = last_activity.lock() {
+                            *last = std::time::Instant::now();
+                        }
+                    }
+                }
+            }
+            let idle_for = last_activity
+                .lock()
+                .map(|last| last.elapsed())
+                .unwrap_or_default();
+            if idle_for >= std::time::Duration::from_secs(10 * 60) {
+                let mut inner = state.lock();
+                if inner.app_locked {
+                    continue;
+                }
+                inner.app_locked = true;
+                inner.quick_chat = None;
+                inner.quick_chat_changed_at = None;
+                inner.quick_chat_layout = None;
+                inner.chat_read_authorized = false;
+                inner.background_cloud_consent = false;
+                drop(inner);
+                state.stop_meeting();
+                workspace::layout(&app);
+                let _ = app.emit_to("ui", "erp-quick-chat", None::<String>);
+                let _ = app.emit_to("ui", "app-lock-changed", ());
+            }
+        }
+    });
 }

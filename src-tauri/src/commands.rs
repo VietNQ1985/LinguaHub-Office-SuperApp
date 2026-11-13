@@ -75,6 +75,73 @@ pub fn app_lock(webview: Webview, app: AppHandle) -> Res<Value> {
 }
 
 #[tauri::command]
+pub async fn app_unlock_biometric(webview: Webview, app: AppHandle) -> Res<()> {
+    if webview.label() != "ui" {
+        return Err("Untrusted sender".into());
+    }
+    let state = app.state::<AppState>();
+    if !state.lock().app_locked || state.store.app_lock_verifier().is_none() {
+        return Err("LinguaHub chưa được thiết lập khóa.".into());
+    }
+    #[cfg(windows)]
+    {
+        let window = app.get_window("main").ok_or("Chưa có cửa sổ.")?;
+        let hwnd = window.hwnd().map_err(fail)?;
+        let mut inner = state.lock();
+        if inner
+            .unlock_after
+            .is_some_and(|until| until > std::time::Instant::now())
+        {
+            return Err("Vui lòng chờ vài giây rồi thử lại.".into());
+        }
+        inner.unlock_after = Some(std::time::Instant::now() + Duration::from_secs(3));
+        drop(inner);
+
+        let verified = windows_hello_verify(hwnd, "Xác thực để mở khóa LinguaHub").await?;
+        if !verified {
+            return Err("Windows Hello chưa xác thực thành công. Anh có thể dùng PIN.".into());
+        }
+        {
+            let mut inner = state.lock();
+            inner.app_locked = false;
+            inner.unlock_after = None;
+        }
+        workspace::layout(&app);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("Mở khóa sinh trắc học hiện chỉ hỗ trợ Windows Hello.".into())
+    }
+}
+
+#[cfg(windows)]
+async fn windows_hello_verify(hwnd: windows::Win32::Foundation::HWND, message: &str) -> Res<bool> {
+    use windows::core::HSTRING;
+    use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
+    use windows::Win32::System::WinRT::{IUserConsentVerifierInterop, RoGetActivationFactory};
+
+    let factory: IUserConsentVerifierInterop = unsafe {
+        RoGetActivationFactory(&HSTRING::from(
+            "Windows.Security.Credentials.UI.UserConsentVerifier",
+        ))
+    }
+    .map_err(|error| format!("Không khởi động được Windows Hello: {error}"))?;
+    let operation =
+        unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
+            .map_err(|error| format!("Không mở được xác thực Windows Hello: {error}"))?;
+    let result = operation
+        .await
+        .map_err(|error| format!("Xác thực Windows Hello lỗi: {error}"))?;
+    if result == UserConsentVerificationResult::Verified {
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 pub async fn app_unlock(webview: Webview, app: AppHandle, pin: String) -> Res<()> {
     use ring::{
         pbkdf2,

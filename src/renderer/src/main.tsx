@@ -6,6 +6,7 @@ import { ErpFloatingPanel } from './ErpFloatingPanel'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import './style.css'
 import './dashboard.css'
 import './bridge'
@@ -41,6 +42,7 @@ import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpToLine,
+  Fingerprint,
   LockKeyhole,
   Maximize2,
   Minimize2,
@@ -1858,6 +1860,7 @@ function LockedWorkspace() {
   const [confirmation, setConfirmation] = React.useState('')
   const [error, setError] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [biometricBusy, setBiometricBusy] = React.useState(false)
 
   const showState = (state: AppLockState) => {
     setLock(state)
@@ -1866,11 +1869,30 @@ function LockedWorkspace() {
 
   React.useEffect(() => {
     void invoke<AppLockState>('app_lock_state').then(showState).catch(error => setError(String(error)))
+    let unlisten: (() => void) | undefined
+    void listen('app-lock-changed', () => {
+      void invoke<AppLockState>('app_lock_state').then(showState).catch(error => setError(String(error)))
+    }).then(dispose => { unlisten = dispose })
+    return () => unlisten?.()
   }, [])
 
   const lockApp = () => {
     setError('')
     void invoke<AppLockState>('app_lock').then(showState).catch(error => setError(String(error)))
+  }
+
+  const unlockWithBiometrics = async () => {
+    if (biometricBusy || busy) return
+    setError('')
+    setBiometricBusy(true)
+    try {
+      await invoke('app_unlock_biometric')
+      showState({ locked: false, configured: true })
+    } catch (error) {
+      setError(String(error))
+    } finally {
+      setBiometricBusy(false)
+    }
   }
 
   return <>
@@ -1902,11 +1924,14 @@ function LockedWorkspace() {
       }}>
         <LockKeyhole size={28} aria-hidden="true" />
         <h1>{lock.configured ? 'LinguaHub đang khóa' : 'Tạo PIN khóa LinguaHub'}</h1>
-        <p>{lock.configured ? 'Nhập PIN để tiếp tục.' : 'Dùng PIN từ 6 đến 12 chữ số. App sẽ yêu cầu PIN khi khởi động lại.'}</p>
+        <p>{lock.configured ? 'Mở khóa bằng Windows Hello hoặc nhập PIN.' : 'Dùng PIN từ 6 đến 12 chữ số. App sẽ yêu cầu PIN khi khởi động lại.'}</p>
+        {lock.configured && <button className="app-lock-biometric" type="button" disabled={busy || biometricBusy} onClick={() => void unlockWithBiometrics()}>
+          <Fingerprint size={20} aria-hidden="true" /> {biometricBusy ? 'Đang xác thực với Windows Hello…' : 'Mở khóa bằng vân tay / Windows Hello'}
+        </button>}
         <label>Mã PIN<input autoFocus type="password" inputMode="numeric" autoComplete={lock.configured ? 'current-password' : 'new-password'} pattern="[0-9]{6,12}" maxLength={12} value={pin} onChange={event => setPin(event.target.value)} required /></label>
         {!lock.configured && <label>Xác nhận PIN<input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6,12}" maxLength={12} value={confirmation} onChange={event => setConfirmation(event.target.value)} required /></label>}
         {error && <p role="alert">{error}</p>}
-        <button className="primary-button" disabled={busy}>{lock.configured ? 'Mở khóa' : 'Lưu PIN và tiếp tục'}</button>
+        <button className="primary-button" disabled={busy || biometricBusy}>{lock.configured ? 'Mở khóa bằng PIN' : 'Lưu PIN và tiếp tục'}</button>
       </form> : <p role={error ? 'alert' : 'status'}>{error || 'Đang kiểm tra khóa LinguaHub…'}</p>}
     </main>}
   </>

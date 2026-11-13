@@ -1,6 +1,6 @@
 [package]
 name = "linguahub-office-superapp"
-version = "0.4.24"
+version = "0.4.25"
 description = "LinguaHub on Tauri: messaging workspace with on-device chat translation"
 edition = "2021"
 rust-version = "1.88"
@@ -60,6 +60,9 @@ windows = { version = "0.62", features = [
   "Win32_Security_Credentials",
   "Win32_Security_Cryptography",
   "Win32_System_Memory",
+  "Win32_System_WinRT",
+  "Win32_System_SystemInformation",
+  "Security_Credentials_UI",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
 ] }
