@@ -313,6 +313,14 @@ impl Store {
         self.get("model").unwrap_or_default()
     }
 
+    pub(crate) fn app_lock_verifier(&self) -> Option<String> {
+        self.get("appLock.verifier")
+    }
+
+    pub(crate) fn set_app_lock_verifier(&self, verifier: &str) -> anyhow::Result<()> {
+        self.set("appLock.verifier", verifier)
+    }
+
     /// `reply_model`: optional separate model for suggestions and reply translation ("" = same as `model`).
     pub fn set_preferences(
         &self,

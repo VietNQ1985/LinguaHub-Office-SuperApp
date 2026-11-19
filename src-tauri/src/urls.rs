@@ -61,13 +61,7 @@ pub fn is_workspace_url(service: &str, value: &str) -> bool {
         "meet" => host == "meet.google.com" || google_sign_in_host(&host),
         "zalo" => {
             url.port().is_none()
-                && [
-                    "chat.zalo.me",
-                    "id.zalo.me",
-                    "jr.zaloapp.com",
-                    "jr.chat.zalo.me",
-                ]
-                .contains(&host.as_str())
+                && (host_matches(&host, "zalo.me") || host_matches(&host, "zaloapp.com"))
         }
         "whatsapp" => host_matches(&host, "whatsapp.com"),
         // Telegram Web (K and A clients); sign-in happens on the same host.
@@ -174,7 +168,10 @@ mod tests {
         assert!(is_workspace_url("whatsapp", "https://web.whatsapp.com/"));
         assert!(!is_workspace_url("whatsapp", "http://web.whatsapp.com/"));
         assert!(is_workspace_url("zalo", "https://id.zalo.me/account"));
+        assert!(is_workspace_url("zalo", "https://redirect.zalo.me/"));
+        assert!(is_workspace_url("zalo", "https://post.oa.zalo.me/"));
         assert!(!is_workspace_url("zalo", "https://chat.zalo.me:444/"));
+        assert!(!is_workspace_url("zalo", "https://chat.zalo.me.evil.test/"));
         assert!(is_workspace_url("meet", "https://accounts.google.com/x"));
         assert!(is_workspace_url(
             "zoom",

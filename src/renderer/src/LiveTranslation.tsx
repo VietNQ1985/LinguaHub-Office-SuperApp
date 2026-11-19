@@ -125,6 +125,11 @@ export function LiveTranslation({ model, active=true, service='whatsapp' }: { mo
       if (cancelled || !activeModel) return
       const pending = items.filter(item => item.status === 'translating' && !inFlightMessageKeys.current.has(item.key))
       if (!pending.length) return
+      if (service === 'outlook') {
+        if (currentBatches.current.has('priority')) return
+        launchTranslation([pending[pending.length - 1]], version, 'priority')
+        return
+      }
       const priorityKey = newestPriorityKey
       const next = nextTranslationBatch(pending, priorityKey, item => item.key, initialPriorityPending)
       if (!next) return
@@ -146,22 +151,25 @@ export function LiveTranslation({ model, active=true, service='whatsapp' }: { mo
 
     function launchTranslation(selected: VisibleMessage[], version: number, lane: 'priority' | 'backlog') {
       if (cancelled || !activeModel || !selected.length || currentBatches.current.has(lane)) return
+      const emailTranslation = service === 'outlook'
       const requestMessages: Array<{ id: string; text: string }> = []
       const sourceById = new Map<string, VisibleMessage>()
-      for (const item of selected) {
+      if (!emailTranslation) for (const item of selected) {
         const id = `m${requestMessages.length}`
         const candidate = [...requestMessages, { id, text: item.text.slice(0, 4000) }]
         if (JSON.stringify({ messages: candidate }).length > 11000) break
         requestMessages.push(candidate.at(-1)!)
         sourceById.set(id, item)
       }
-      if (!requestMessages.length) return
+      const emailSource = emailTranslation ? selected[0] : undefined
+      if (emailSource) sourceById.set('email', emailSource)
+      if (!emailTranslation && !requestMessages.length) return
       const requestId = crypto.randomUUID()
       const requestStartedAt = Date.now()
-      const primary = sourceById.get('m0')!
+      const primary = emailTranslation ? emailSource! : sourceById.get('m0')!
       currentBatches.current.set(lane, requestId)
       for (const item of sourceById.values()) inFlightMessageKeys.current.add(item.key)
-      setStatus(`Đang dịch ${requestMessages.length} tin nhắn…`)
+      setStatus(emailTranslation ? 'Đang dịch email…' : `Đang dịch ${requestMessages.length} tin nhắn…`)
       let partialTranslation = ''
       const removeStreamListener = lane === 'priority'
         ? window.lingua.onAiStream(requestId, delta => {
@@ -177,15 +185,22 @@ export function LiveTranslation({ model, active=true, service='whatsapp' }: { mo
             commitMessages(updated)
           })
         : () => {}
-      const task = lane === 'priority' ? 'translateLatest' : 'translateMessages'
-      const input = lane === 'priority' ? JSON.stringify({ text: primary.text.slice(0, 4000) }) : JSON.stringify({ messages: requestMessages })
+      const task = emailTranslation ? 'translateEmail' : lane === 'priority' ? 'translateLatest' : 'translateMessages'
+      const input = emailTranslation ? primary.text : lane === 'priority' ? JSON.stringify({ text: primary.text.slice(0, 4000) }) : JSON.stringify({ messages: requestMessages })
       void window.lingua.runAi(task, input, activeModel, requestId)
         .then(value => {
           if (cancelled || currentBatches.current.get(lane) !== requestId || version !== conversationVersion.current) return
           const run = value as TranslationRun
           const result = run?.result
           const values = new Map<string, TranslationValue>()
-          if (lane === 'priority') {
+          if (emailTranslation) {
+            if (!result || !('translation' in result) || typeof result.translation !== 'string') throw new Error('Kết quả dịch email không hợp lệ.')
+            const translated = { translation: result.translation, explanation: result.explanation || '' }
+            values.set(primary.key, translated)
+            cache.current.set(activeModel, primary.text, translated, Date.now(), cacheScope(primary))
+            failed.current.delete(failureKey(primary))
+            failureMessages.current.delete(failureKey(primary))
+          } else if (lane === 'priority') {
             if (!result || !('translation' in result) || typeof result.translation !== 'string') throw new Error('Kết quả dịch tin mới không hợp lệ.')
             const translated = { translation: result.translation, explanation: result.explanation || '' }
             values.set(primary.key, translated)
@@ -491,7 +506,7 @@ export function LiveTranslation({ model, active=true, service='whatsapp' }: { mo
 
     <div className="translation-list" aria-label="Danh sách bản dịch">
       {skippedCount > 0 && <p className="translation-skipped">Đã bỏ qua {skippedCount} tin không phải tiếng Anh</p>}
-      {translatableMessages.map(item => <article className={item.side === 'right' ? 'translation-message translation-message-self' : item.side === 'left' ? 'translation-message translation-message-other' : 'translation-message'} key={item.key}>
+      {translatableMessages.map(item => <article className={`${item.side === 'right' ? 'translation-message translation-message-self' : item.side === 'left' ? 'translation-message translation-message-other' : 'translation-message'}${service === 'outlook' ? ' translation-message-email' : ''}`} key={item.key}>
         {item.value?.translation.trim()
           ? <>
               <p className="translation-vietnamese" lang="vi">{item.value.translation}</p>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import packageMetadata from '../../../package.json'
 import {
   BrainCircuit,
   BookOpenText,
@@ -88,7 +89,7 @@ export function OfficeSidebar({
         {!collapsed && <span>Quản lý ứng dụng</span>}
       </button>
       <div className="office-version" title="LinguaHub Office SuperApp · © 2026 Viet Nguyen Quoc">
-      {collapsed ? <span aria-label="Phiên bản 0.4.15">0.4.15</span> : <><span>LinguaHub Office SuperApp · v0.4.15</span><small>© 2026 Viet Nguyen Quoc</small></>}
+      {collapsed ? <span aria-label={`Phiên bản ${packageMetadata.version}`}>{packageMetadata.version}</span> : <><span>LinguaHub Office SuperApp · v{packageMetadata.version}</span><small>© 2026 Viet Nguyen Quoc</small></>}
       </div>
     </div>
   </aside>
@@ -98,6 +99,20 @@ export function OfficeGlobalSearch({ onNavigate }: { onNavigate: (area: OfficeAr
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const container = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const close = () => setOpen(false)
+    const outside = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) close()
+    }
+    document.addEventListener('pointerdown', outside, true)
+    // Native child webviews do not bubble pointer events into the shell.
+    window.addEventListener('blur', close)
+    return () => {
+      document.removeEventListener('pointerdown', outside, true)
+      window.removeEventListener('blur', close)
+    }
+  }, [])
   const results = useMemo(() => {
     const term = query.trim().toLocaleLowerCase('vi')
     return term
@@ -125,7 +140,9 @@ export function OfficeGlobalSearch({ onNavigate }: { onNavigate: (area: OfficeAr
     input.current?.blur()
   }
 
-  return <div className="office-global-search">
+  return <div ref={container} className="office-global-search" onBlur={event => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+  }}>
     <label className="visually-hidden" htmlFor="office-global-search">Tìm trang, tính năng hoặc ứng dụng</label>
     <input
       ref={input}

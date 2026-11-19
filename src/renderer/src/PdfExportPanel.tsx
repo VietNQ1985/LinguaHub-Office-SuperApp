@@ -385,6 +385,14 @@ export function PdfExportSettingsForm({ compact = false }: { compact?: boolean }
         Ghi đè nếu trùng tên (mặc định: tự đánh số (2), (3)…)
       </label>
 
+      <label className="pdf-check" title="Sau khi xuất nhiều tệp, nối các PDF đã tạo theo thứ tự danh sách thành một PDF tổng hợp.">
+        <input type="checkbox" checked={settings.mergeOutputs} onChange={event => void update(
+          { mergeOutputs: event.target.checked },
+          event.target.checked ? 'Đã bật nối các PDF đã tạo thành một tệp tổng hợp.' : 'Đã tắt nối PDF; mỗi tệp được lưu riêng.',
+        )} />
+        Nối các PDF đã tạo thành một file (mặc định bật)
+      </label>
+
       {notice && (
         <p className="helper-text" role="status">
           {notice}
@@ -512,6 +520,7 @@ export function PdfExportPanel({
       setBusy(true)
       setProgress({ completed: 0, total: attachments.length, currentFile: '', finished: false })
       let okCount = 0
+      const exportedPaths: string[] = []
       try {
         for (const [index, att] of attachments.entries()) {
           const pdfName = computeErpAttachmentPdfName(att, index)
@@ -533,6 +542,7 @@ export function PdfExportPanel({
               att.href,
             )
             okCount += 1
+            exportedPaths.push(result.outputPath)
             const seen = loadSeenErpAttachments()
             seen.add(erpAttachmentFingerprint(tabId, att))
             saveSeenErpAttachments(seen)
@@ -566,15 +576,25 @@ export function PdfExportPanel({
             finished: index + 1 === attachments.length,
           })
         }
+        if (settings.mergeOutputs && exportedPaths.length > 1) {
+          try {
+            const merged = await window.lingua.mergePdfOutputs(exportedPaths, `${effectiveSampleId || 'ERP'}_TongHop.pdf`)
+            setLog(prev => [{ id: `merged|${merged.outputPath}`, name: 'PDF tổng hợp', ok: true, message: `Đã nối ${exportedPaths.length} tệp → ${merged.outputPath.split(/[\\/]/).pop()}`, outputPath: merged.outputPath }, ...prev].slice(0, 30))
+            setStatus(`Đã lưu ${okCount}/${attachments.length} PDF riêng và nối thành một tệp tổng hợp.`)
+          } catch (error) {
+            setStatus(`Đã lưu ${okCount}/${attachments.length} PDF riêng nhưng chưa nối được: ${errorText(error, 'Lỗi nối PDF.')}`)
+          }
+        } else {
         setStatus(
           `Đã đọc từ phiếu ERP và lưu ${okCount}/${attachments.length} tệp PDF vào ${settings.outputFolder}.`,
         )
+        }
       } finally {
         busyRef.current = false
         setBusy(false)
       }
     },
-    [askForSettings, computeErpAttachmentPdfName, settings.outputFolder],
+    [askForSettings, computeErpAttachmentPdfName, effectiveSampleId, settings.mergeOutputs, settings.outputFolder],
   )
 
   const refreshSource = useCallback(async (): Promise<ErpSampleFile[]> => {
@@ -604,6 +624,7 @@ export function PdfExportPanel({
       busyRef.current = true
       setBusy(true)
       let okCount = 0
+      const exportedPaths: string[] = []
       try {
         for (const [index, file] of files.entries()) {
           setStatus(`Đang lưu PDF ${index + 1}/${files.length}: ${file.name}…`)
@@ -616,6 +637,7 @@ export function PdfExportPanel({
           try {
             const result: PdfExportResult = await window.lingua.convertToPdf(file.path, fileName)
             okCount += 1
+            exportedPaths.push(result.outputPath)
             const logId = `file|${file.path.toLocaleLowerCase()}`
             setLog(prev => [
               {
@@ -640,15 +662,25 @@ export function PdfExportPanel({
             ].slice(0, 30))
           }
         }
+        if (settings.mergeOutputs && exportedPaths.length > 1) {
+          try {
+            const merged = await window.lingua.mergePdfOutputs(exportedPaths, `${effectiveSampleId || 'PDF'}_TongHop.pdf`)
+            setLog(prev => [{ id: `merged|${merged.outputPath}`, name: 'PDF tổng hợp', ok: true, message: `Đã nối ${exportedPaths.length} tệp → ${merged.outputPath.split(/[\\/]/).pop()}`, outputPath: merged.outputPath }, ...prev].slice(0, 30))
+            setStatus(`Đã lưu ${okCount}/${files.length} PDF riêng và nối thành một tệp tổng hợp.`)
+          } catch (error) {
+            setStatus(`Đã lưu ${okCount}/${files.length} PDF riêng nhưng chưa nối được: ${errorText(error, 'Lỗi nối PDF.')}`)
+          }
+        } else {
         setStatus(
           `Đã lưu ${okCount}/${files.length} tệp PDF vào ${settings.outputFolder}.`,
         )
+        }
       } finally {
         busyRef.current = false
         setBusy(false)
       }
     },
-    [askForSettings, effectiveSampleId, settings.nameTemplate, settings.outputFolder],
+    [askForSettings, effectiveSampleId, settings.mergeOutputs, settings.nameTemplate, settings.outputFolder],
   )
 
   // Auto mode for new files landing in the attachment folder (e.g. Downloads)

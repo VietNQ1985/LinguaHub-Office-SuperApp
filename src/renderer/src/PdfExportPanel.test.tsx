@@ -28,6 +28,10 @@ test('PDF signature appearance options are selectable and persisted', async () =
     await act(async () => root.render(createElement(PdfExportSettingsForm)))
     await act(async () => new Promise(resolve => setTimeout(resolve, 10)))
 
+    const mergeCheckbox = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+      .find(input => input.parentElement?.textContent?.includes('Nối các PDF'))
+    expect(mergeCheckbox?.checked).toBe(true)
+
     const appearance = container.querySelector<HTMLSelectElement>(
       'select[aria-label="Kiểu hiển thị chữ ký số"]',
     )!
