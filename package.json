@@ -1,8 +1,8 @@
 {
   "name": "linguahub-office-superapp",
-  "version": "0.4.28",
+  "version": "0.4.30",
   "private": true,
-  "description": "LinguaHub Office SuperApp 0.4.28 on Tauri v2 with ERP focus workspaces, quick chat, Windows PDF signing, biometric app unlock, and idle locking.",
+  "description": "LinguaHub Office SuperApp 0.4.30 on Tauri v2 with ERP focus workspaces, quick chat, Windows PDF signing, biometric app unlock, and idle locking.",
   "license": "MIT",
   "type": "module",
   "scripts": {

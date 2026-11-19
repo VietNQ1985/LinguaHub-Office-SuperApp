@@ -477,6 +477,7 @@ fn web_tab_target_allowed(address: &str, already_open: bool) -> bool {
 #[cfg(test)]
 mod popup_policy_tests {
     use super::{popup_target_allowed, web_tab_target_allowed};
+
     #[test]
     fn only_https_without_embedded_credentials_is_opened_as_tab() {
         assert!(popup_target_allowed(
@@ -1305,14 +1306,18 @@ fn ensure_service_view<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow:
     })
     .on_new_window(move |url, _features| {
         let target = url.to_string();
-        // Sign-in popups stay in the app: Zalo, and Zoom/Meet hosts plus Google sign-in for them.
-        let popup = if popup_service == "zalo" {
-            urls::is_workspace_url("zalo", &target)
-        } else {
-            (popup_service == "zoom" || popup_service == "meet")
-                && (urls::is_workspace_url(&popup_service, &target)
-                    || urls::is_workspace_url("meet", &target))
-        };
+        // Let WebView2 create Zalo's trusted popups itself so Zalo receives a real
+        // WindowProxy for its about:blank-then-redirect flow.
+        if popup_service == "zalo" {
+            if target == "about:blank" || urls::is_workspace_url("zalo", &target) {
+                return NewWindowResponse::Allow;
+            }
+            return NewWindowResponse::Deny;
+        }
+        // Zoom/Meet hosts plus Google sign-in remain in the app.
+        let popup = (popup_service == "zoom" || popup_service == "meet")
+            && (urls::is_workspace_url(&popup_service, &target)
+                || urls::is_workspace_url("meet", &target));
         if popup {
             return NewWindowResponse::Allow;
         }
@@ -1382,7 +1387,7 @@ fn ensure_service_view<R: Runtime>(app: &AppHandle<R>, service: &str) -> anyhow:
         LogicalPosition::new(-2.0, -2.0),
         LogicalSize::new(1.0, 1.0),
     )?;
-    let _ = wv::install_permissions(&webview, service_permissions(app, service_owned));
+    let _ = wv::install_permissions(&webview, service_permissions(app, service_owned.clone()));
     state.lock().views.insert(label);
     Ok(())
 }
