@@ -73,3 +73,19 @@ test('switching to Outlook rechecks mail permission and shows Enable instead of 
   expect(ai).not.toHaveBeenCalled()
  }finally{await act(async()=>root.unmount());dom.window.close()}
 })
+
+test('Outlook translates the full email through the plain-text email task',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{pretendToBeVisual:true});vi.stubGlobal('window',dom.window);vi.stubGlobal('document',dom.window.document);vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true)
+ const body='Dear Sir or Madam,\n\nPlease settle the outstanding invoice without further delay.\n\nBest regards.'
+ const runAi=vi.fn(async(_task:string,_input:string)=>({result:{translation:'Kính gửi Quý ông/Bà,\n\nVui lòng thanh toán hóa đơn còn tồn đọng sớm.',explanation:''},timing:{requestMs:1,firstResponseMs:1,completionMs:2}}))
+ Object.assign(dom.window,{lingua:{hasVisibleChatReadAuthorization:async()=>true,readVisibleChat:async()=>({conversationId:'mail-1',messages:[{id:'mail-message-1',text:body,side:'left'}]}),onVisibleChatChanged:()=>()=>{},onAiStream:()=>()=>{},cancelAi:async()=>true,stopVisibleChatRead:async()=>{},runAi}})
+ const container=dom.window.document.querySelector('#root')!,root=createRoot(container)
+ try{
+  await act(async()=>root.render(createElement(LiveTranslation,{model:'local',service:'outlook'})))
+  await act(async()=>new Promise(resolve=>setTimeout(resolve,30)))
+  expect(runAi).toHaveBeenCalledTimes(1)
+  expect(runAi.mock.calls[0][0]).toBe('translateEmail')
+  expect(runAi.mock.calls[0][1]).toBe(body)
+  expect(container.textContent).toContain('Vui lòng thanh toán hóa đơn còn tồn đọng sớm.')
+ }finally{await act(async()=>root.unmount());dom.window.close()}
+})

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import packageMetadata from '../../../package.json'
 import {
   BrainCircuit,
   BookOpenText,
@@ -88,7 +89,7 @@ export function OfficeSidebar({
         {!collapsed && <span>Quản lý ứng dụng</span>}
       </button>
       <div className="office-version" title="LinguaHub Office SuperApp · © 2026 Viet Nguyen Quoc">
-      {collapsed ? <span aria-label="Phiên bản 0.4.25">0.4.25</span> : <><span>LinguaHub Office SuperApp · v0.4.25</span><small>© 2026 Viet Nguyen Quoc</small></>}
+      {collapsed ? <span aria-label={`Phiên bản ${packageMetadata.version}`}>{packageMetadata.version}</span> : <><span>LinguaHub Office SuperApp · v{packageMetadata.version}</span><small>© 2026 Viet Nguyen Quoc</small></>}
       </div>
     </div>
   </aside>

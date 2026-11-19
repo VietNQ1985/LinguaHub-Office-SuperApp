@@ -21,11 +21,45 @@ function readVisibleChatPage(service: ChatService): ChatDomSnapshot {
     let bodies:Element[]=[]
     for(const selector of selectors){bodies=Array.from(scope.querySelectorAll(selector)).filter(visible);if(bodies.length)break}
     bodies=bodies.filter(node=>!bodies.some(other=>other!==node&&other.contains(node)))
-    // Read only expanded message bodies, retaining paragraphs and list markers.
+    // Read only expanded message bodies. Serialize block boundaries explicitly so
+    // Outlook's innerText layout quirks cannot flatten paragraphs or list items.
+    const structuredText = (root: Element) => {
+      const block = new Set(['ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','DIV','DL','DT','DD','FIELDSET','FIGCAPTION','FIGURE','FOOTER','FORM','H1','H2','H3','H4','H5','H6','HEADER','HR','LI','MAIN','OL','P','PRE','SECTION','TABLE','TBODY','TD','TFOOT','TH','THEAD','TR','UL'])
+      const lines: string[] = []
+      const walk = (node: Node, preserveWhitespace = false) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const raw = node.textContent?.replace(/\u00a0/g, ' ').replace(/[\u200b\u200c\u200d\ufeff]/g, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ') || ''
+          const value = preserveWhitespace ? raw : raw.replace(/[\t ]+/g, ' ').trim()
+          if (value) {
+            if (preserveWhitespace && lines.length && !lines.at(-1)?.endsWith('\n')) lines[lines.length - 1] += value
+            else lines.push(value)
+          }
+          return
+        }
+        if (!(node instanceof Element)) return
+        if (node.matches('script,style,button,[role="button"],[aria-hidden="true"],.ms-Details-header')) return
+        const tag = node.tagName
+        const listItem = tag === 'LI'
+        const start = lines.length
+        if (listItem) {
+          const parent = node.parentElement
+          const ordered = parent?.tagName === 'OL'
+          const peers = parent ? Array.from(parent.children).filter(child => child.tagName === 'LI') : []
+          const index = peers.indexOf(node) + 1
+          lines.push(ordered ? `${index}.` : '•')
+        }
+        const preserveChildWhitespace = preserveWhitespace || tag === 'PRE' || node.getAttribute('style')?.includes('white-space: pre') === true || node.getAttribute('class')?.includes('allowTextSelection') === true
+        for (const child of Array.from(node.childNodes)) walk(child, preserveChildWhitespace)
+        if (block.has(tag) && lines.length > start) lines.push('')
+      }
+      walk(root)
+      const text = lines.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+      return text || ((root as HTMLElement).innerText || root.textContent || '').trim()
+    }
     const messages:ChatDomMessage[]=[]
     for(const node of bodies.slice(-10)){
-      const body=((node as HTMLElement).innerText||node.textContent||'').trim()
-      for(let offset=0;offset<body.length;offset+=3500)messages.push({text:body.slice(offset,offset+3500),side:'left',id:(node.id||'mail')+':'+offset})
+      const body=structuredText(node)
+      if(body)messages.push({text:body.slice(0,90000),side:'left',id:`mail${messages.length}`})
     }
     const title=Array.from(scope.querySelectorAll('[role="heading"], h1, h2')).filter(visible).map(node=>(node as HTMLElement).innerText||node.textContent||'').find(Boolean)||''
     return {conversationHint:location.pathname+':'+title.slice(0,150)+':'+(messages[0]?.text.slice(0,100)||''),messages}

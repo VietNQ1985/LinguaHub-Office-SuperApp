@@ -2012,7 +2012,11 @@ fn has_cloud_consent_for_task(task: &str, manual: bool, background: bool) -> boo
         manual || background
     } else if matches!(
         task,
-        "translateLatest" | "translateMessages" | "replyFromChat" | "replyTranslationFromChat"
+        "translateLatest"
+            | "translateMessages"
+            | "translateEmail"
+            | "replyFromChat"
+            | "replyTranslationFromChat"
     ) {
         background
     } else {
@@ -2176,7 +2180,7 @@ pub async fn ai_run(
     if model.starts_with("chatgpt:") && !has_cloud_consent_for_task(&task, manual, background) {
         return Err(if matches!(
             task.as_str(),
-            "translateLatest" | "translateMessages" | "replyTranslationFromChat"
+            "translateLatest" | "translateMessages" | "translateEmail" | "replyTranslationFromChat"
         ) {
             "Anh cần cho phép gửi chữ tin nhắn hiển thị đến ChatGPT trước."
         } else {
@@ -2244,14 +2248,14 @@ pub async fn ai_run(
     let (cancel, _guard) = register_request(&state, request_id.as_deref())?;
     let timing = Mutex::new(Timing::default());
     let on_text = match (&request_id, task.as_str()) {
-        (Some(id), "translateLatest") => Some(stream_to_ui(&app, id)),
+        (Some(id), "translateLatest" | "translateEmail") => Some(stream_to_ui(&app, id)),
         _ => None,
     };
     let result = ai::run(&task, &text, &name, responder, &cancel, &timing, on_text)
         .await
         .map_err(fail)?;
     state.store.record_ai_usage(provider, &task);
-    if task == "translateMessages" || task == "translateLatest" {
+    if task == "translateMessages" || task == "translateLatest" || task == "translateEmail" {
         return Ok(json!({ "result": result, "timing": timing.into_inner().unwrap() }));
     }
     Ok(result)

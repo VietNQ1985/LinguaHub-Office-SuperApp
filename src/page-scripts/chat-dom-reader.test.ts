@@ -3,11 +3,12 @@ import { expect, test } from 'vitest'
 import { buildVisibleChatReadScript } from './chat-dom-reader'
 
 function runPageScript(html: string, service: 'whatsapp' | 'teams' | 'zoom' | 'meet' | 'zalo' | 'telegram' | 'outlook') {
-  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true })
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, beforeParse(window) { Object.defineProperty(window, 'innerWidth', { value: 1400 }) } })
   dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
-    const height = this.getAttribute('data-hidden') === 'true' ? 0 : 30
+    const height = this.getAttribute('data-hidden') === 'true' || !this.textContent?.trim() ? 0 : 30
     const top = Number(this.getAttribute('data-top') || 10)
-    return { x: 0, y: top, top, left: 0, right: 800, bottom: top + height, width: 800, height, toJSON() { return this } }
+    const left = 0
+    return { x: left, y: top, top, left, right: left + 800, bottom: top + height, width: 800, height, toJSON() { return this } }
   }
   return { dom, result: dom.window.eval(buildVisibleChatReadScript(service)) as { conversationHint: string; messages: Array<{ text: string; side: string }> } }
 }
@@ -218,7 +219,21 @@ test('Outlook reads the visible opened mail, excluding inbox, hidden mail and dr
 })
 
 test('Outlook prioritizes expanded UniqueMessageBody over inbox and misleading document containers',()=>{
- const {dom,result}=runPageScript(`<main aria-label="Reading pane"><h2>Invoice</h2><div id="UniqueMessageBody_3" role="document">Review ERP invoice.\n- Verify tax.</div><div role="document">Unrelated document</div><div id="UniqueMessageBody_hidden" aria-hidden="true">Hidden history</div></main><div id="MailList"><div role="document">Inbox preview</div></div>`, 'outlook')
+ const {dom,result}=runPageScript(`<main aria-label="Reading pane"><h2>Invoice</h2><div id="UniqueMessageBody_3" role="document">Review ERP invoice.<br>- Verify tax.</div><div role="document">Unrelated document</div><div id="UniqueMessageBody_hidden" aria-hidden="true">Hidden history</div></main><div id="MailList"><div role="document">Inbox preview</div></div>`, 'outlook')
  expect(result.messages.map(m=>m.text).join('')).toBe('Review ERP invoice.\n- Verify tax.')
+ dom.window.close()
+})
+
+test('Outlook preserves email paragraphs, ordered and unordered list items',()=>{
+ const {dom,result}=runPageScript(`<main aria-label="Reading pane"><div id="UniqueMessageBody_3" role="document"><p>Dear Mr. Bac,</p><p>Thank you for providing the form.</p><p>We reviewed it and need clarification:</p><ol><li>Supplier information</li><li>Company name</li></ol><ul><li>First batch</li><li>Second batch</li></ul><p>Best regards,</p></div></main>`, 'outlook')
+ expect(result.messages[0].text).toBe('Dear Mr. Bac,\n\nThank you for providing the form.\n\nWe reviewed it and need clarification:\n\n1.\nSupplier information\n\n2.\nCompany name\n\n•\nFirst batch\n\n•\nSecond batch\n\nBest regards,')
+ dom.window.close()
+})
+
+test('Outlook keeps a long email as one complete message for translation',()=>{
+ const body='An email paragraph.\n\n'.repeat(500)
+ const {dom,result}=runPageScript(`<main aria-label="Reading pane"><div id="UniqueMessageBody_long" role="document">${body}</div></main>`, 'outlook')
+ expect(result.messages).toHaveLength(1)
+ expect(result.messages[0].text).toBe(body.trim())
  dom.window.close()
 })

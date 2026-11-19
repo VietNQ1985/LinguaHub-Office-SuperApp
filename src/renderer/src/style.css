@@ -284,6 +284,7 @@ h2, h3, h4 { color: var(--text); }
   font-size: 14px; font-weight: 500; line-height: 1.5; color: var(--text);
   border-left: 2px solid var(--success); padding-left: 9px;
 }
+.translation-message-email .translation-vietnamese { white-space: pre-wrap; }
 .translation-wait { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 5px; }
 .translation-skipped { margin: 2px 0 4px; color: var(--muted); font-size: 12px; }
 .translation-details { margin-top: 7px; }
